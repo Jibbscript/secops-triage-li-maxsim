@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from alert_triage.retrievers.base import Candidate, QueryBundle, Retriever
+from .base import Candidate, QueryBundle
 
 
 @dataclass
@@ -32,6 +32,8 @@ class HammingUDFRetriever:
     def search(self, query: QueryBundle, k: int = 10) -> list[Candidate]:
         if query.query_bin is None:
             raise ValueError("query.query_bin is required for HammingUDFRetriever")
+        if k < 1:
+            raise ValueError("k must be >= 1")
 
         sql = f"""
         select _rowid, hamming_maxsim(?, mv_bin) as score

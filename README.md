@@ -1,19 +1,35 @@
-# generated artifacts
+# alert-triage-li phase-0 scaffold
 
-this bundle contains first-pass copy-paste-ready code artifacts for the merged
-`alert-triage-li` + `binary hamming maxsim` design.
+This repository currently implements the phase-0 slice of the merged
+`alert-triage-li` + `binary hamming maxsim` design:
 
-included:
-- eval_bundle.yaml
-- revised python protocol files
-- binary calibrator helper
-- binary candidate-gen + rerank retrievers
-- rust cargo workspace
-- kernel crate
-- datafusion udf crate
-- pyo3 shim crate
+- Python encoder and retriever contracts
+- binary calibrator persistence helpers
+- fp16 and binary reference scorers
+- staged binary candidate generation + fp16 rerank contract
+- Rust kernel, DataFusion UDF, and PyO3 shim crates
+- phase-0 unit and contract tests
 
-note:
-the pyo3 `register()` bridge is intentionally left as the one version-sensitive stub,
-because the exact extraction path for a Python-owned `SessionContext` depends on
-the aligned versions of `datafusion`, `datafusion-ffi`, and the Rust bindings.
+What is intentionally not here yet:
+
+- ingestion connectors
+- storage backends
+- full evaluation harness
+- agent orchestration and MCP wiring
+- benchmark sweep infrastructure beyond the Rust workspace scaffold
+
+## Local verification
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e .[dev]
+.venv/bin/pytest
+cargo test --workspace --manifest-path rust/Cargo.toml
+```
+
+## Notes
+
+The PyO3 `register()` bridge remains the version-sensitive seam between the
+Python `datafusion` package and the Rust `datafusion-ffi` handle model. Phase-0
+proves the UDF contract in Rust directly and keeps the Python bridge explicit
+instead of silently claiming end-to-end registration is already done.

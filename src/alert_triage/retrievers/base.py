@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol, Sequence, runtime_checkable
+from typing import Literal, Protocol, Sequence, runtime_checkable
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict
@@ -21,13 +21,16 @@ class QueryBundle(BaseModel):
     filter_expr: str | None = None
 
 
+StageName = Literal["bm25", "binary_hamming", "fp16_maxsim", "hybrid"]
+
+
 @dataclass(frozen=True)
 class Candidate:
     """One candidate retrieved from a search stage."""
 
     alert_id: str
     score: float
-    stage: str
+    stage: StageName
     debug: dict[str, float] = field(default_factory=dict)
 
 
