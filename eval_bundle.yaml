@@ -1,0 +1,142 @@
+schema_version: v0alpha1
+bundle:
+  id: alert-triage-li-binary-rerank-bundle
+  name: alert-triage-li retrieval and triage evaluation bundle
+  description: >
+    evaluation bundle for fp16 maxsim, binary hamming candidate generation,
+    binary+fp16 rerank, and downstream bounded triage action emission
+  owners:
+    - team: siem-modernization-skunkworks
+      role: primary
+  tags:
+    - security
+    - retrieval
+    - late-interaction
+    - binary-hamming
+    - triage
+  provenance:
+    based_on:
+      - research_report_pdf
+      - binary_hamming_build_plan_pdf
+    generated_by: chatgpt
+datasets:
+  - id: synthetic-mitre-overlap-qrels
+    kind: qrels
+    path: data/evals/qrels/mitre_overlap_qrels.json
+    notes: >
+      synthetic relevance labels from technique jaccard plus tactic overlap;
+      require human spot-check before using as a publication-grade claim
+  - id: alert-corpus
+    kind: corpus
+    path: data/corpus.lance
+    metadata_path: data/metadata.duckdb
+  - id: analyst-labels
+    kind: dispositions
+    optional: true
+    path: data/evals/analyst_labels.parquet
+
+encoders:
+  - id: mxbai-edge-colbert-v0-17m
+    quantize_modes: [fp16, binary, both]
+    dim: 48
+    binary_stride: 8
+    calibrator_artifact: models/calibrators/mxbai-edge-colbert-v0-17m.calibrator.npz
+
+retrievers:
+  - id: bm25
+    kind: lexical
+  - id: lance-mv
+    kind: fp16_maxsim
+  - id: hamming-udf-bin
+    kind: binary_hamming
+  - id: binary-then-fp16-rerank
+    kind: staged
+    candidate_retriever: hamming-udf-bin
+    prefilter_top_n: 200
+  - id: hybrid-bm25-then-fp16-rerank
+    kind: staged
+    candidate_retriever: bm25
+    prefilter_top_n: 200
+
+metrics:
+  retrieval:
+    - recall@10
+    - recall@100
+    - ndcg@10
+    - mrr
+    - boundary_tie_rate
+    - topk_strict_above_boundary_agreement
+  latency:
+    - p50_ms
+    - p95_ms
+    - p99_ms
+    - qps_1t
+    - qps_16t
+    - kernel_ms
+    - scan_decode_ms
+    - ffi_overhead_ms
+    - rerank_ms
+  storage:
+    - index_bytes
+    - peak_rss_mb
+    - bytes_per_token
+  reasoning:
+    - action_validity
+    - evidence_grounding
+    - specificity
+    - calibration
+  disposition:
+    - weighted_f1
+    - cohens_kappa
+
+experiments:
+  - id: tier1-retrieval-baselines
+    stage: retrieval
+    corpus_token_slices: [1000000, 10000000, 50000000, 100000000, 150000000]
+    retrievers:
+      - bm25
+      - lance-mv
+      - hamming-udf-bin
+      - binary-then-fp16-rerank
+    warm_cache: [true, false]
+    threads: [1, 16]
+    queries_path: data/evals/queries/query_vectors.npz
+
+  - id: tier2-triage-reasoning
+    stage: reasoning
+    retriever: binary-then-fp16-rerank
+    llm_models:
+      - anthropic:claude-sonnet-4-5
+      - openai:gpt-5
+    judge_models:
+      - anthropic:claude-sonnet-4-5
+      - openai:gpt-5
+    sample_size: 200
+
+  - id: tier3-disposition
+    stage: disposition
+    retriever: binary-then-fp16-rerank
+    labels_dataset: analyst-labels
+    sample_size: 500
+
+acceptance_gates:
+  - id: g_retrieval_speed
+    description: binary no-rerank should materially accelerate retrieval
+    expression: "retriever == 'hamming-udf-bin' => p50_ms <= 0.25 * baseline('lance-mv').p50_ms at corpus_tokens=10000000 warm_cache=true threads=1"
+  - id: g_retrieval_quality
+    description: binary+rerank should stay within 2 ndcg@10 points of fp16 baseline
+    expression: "retriever == 'binary-then-fp16-rerank' => ndcg@10 >= baseline('lance-mv').ndcg@10 - 0.02"
+  - id: g_agent_terminality
+    description: agent must terminate only via propose_investigation_step
+    expression: "terminal_output_kind == 'tool_call' and terminal_tool == 'propose_investigation_step'"
+  - id: g_auditability
+    description: every llm and tool call must have an audit record
+    expression: "orphan_llm_calls == 0 and orphan_tool_calls == 0"
+
+artifacts:
+  reports_dir: data/runs/reports
+  traces_dir: data/runs/traces
+  latency_csv: data/runs/reports/latency.csv
+  retrieval_json: data/runs/reports/tier1.json
+  reasoning_json: data/runs/reports/tier2.json
+  disposition_json: data/runs/reports/tier3.json

@@ -1,0 +1,16 @@
+[package]
+name = "hamming_maxsim_py"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[lib]
+name = "hamming_maxsim_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+datafusion = { workspace = true }
+datafusion-ffi = { workspace = true }
+pyo3 = { workspace = true }
+hamming_maxsim_kernel = { path = "../hamming_maxsim_kernel" }
+hamming_maxsim_udf = { path = "../hamming_maxsim_udf" }

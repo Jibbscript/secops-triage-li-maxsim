@@ -1,0 +1,19 @@
+[workspace]
+members = [
+  "crates/hamming_maxsim_kernel",
+  "crates/hamming_maxsim_udf",
+  "crates/hamming_maxsim_py",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "Apache-2.0"
+authors = ["IBM SIEM Modernization Skunkworks"]
+
+[workspace.dependencies]
+arrow = "55"
+bytemuck = "1.19"
+datafusion = "48"
+datafusion-ffi = "48"
+pyo3 = { version = "0.25", features = ["extension-module"] }

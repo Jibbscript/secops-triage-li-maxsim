@@ -1,0 +1,11 @@
+[package]
+name = "hamming_maxsim_udf"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[dependencies]
+arrow = { workspace = true }
+bytemuck = { workspace = true }
+datafusion = { workspace = true }
+hamming_maxsim_kernel = { path = "../hamming_maxsim_kernel" }

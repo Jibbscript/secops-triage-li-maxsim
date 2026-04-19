@@ -1,0 +1,15 @@
+[package]
+name = "hamming_maxsim_kernel"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[dependencies]
+bytemuck = { workspace = true }
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "kernel_bench"
+harness = false
