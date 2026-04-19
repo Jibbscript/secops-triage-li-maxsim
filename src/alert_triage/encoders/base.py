@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 QuantizeMode = Literal["fp16", "binary", "both"]
+BINARY_BITS = 48
 
 
 class EncodedTokens(BaseModel):
@@ -55,6 +56,10 @@ class BinaryCalibratorModel(BaseModel):
         """
         if float_vectors.ndim != 2:
             raise ValueError(f"expected 2D array, got shape={float_vectors.shape}")
+        if float_vectors.shape[1] != BINARY_BITS:
+            raise ValueError(
+                f"expected {BINARY_BITS}-dim token vectors, got shape={float_vectors.shape}"
+            )
         thresholds = np.median(float_vectors, axis=0).astype(np.float32, copy=False)
         return cls(thresholds=thresholds, rotation=None)
 
@@ -68,6 +73,10 @@ class BinaryCalibratorModel(BaseModel):
         """
         if x.ndim != 2:
             raise ValueError(f"expected 2D array, got shape={x.shape}")
+        if x.shape[1] != BINARY_BITS:
+            raise ValueError(
+                f"expected {BINARY_BITS}-dim token vectors, got shape={x.shape}"
+            )
         if x.shape[1] != self.thresholds.shape[0]:
             raise ValueError(
                 f"dim mismatch: x.shape[1]={x.shape[1]} thresholds={self.thresholds.shape[0]}"
@@ -76,8 +85,10 @@ class BinaryCalibratorModel(BaseModel):
         y = x @ self.rotation if self.rotation is not None else x
         bits = (y > self.thresholds).astype(np.uint8, copy=False)
         packed = np.packbits(bits, axis=-1, bitorder="little")
-        if packed.shape[1] > 8:
-            raise ValueError(f"packed representation exceeded 8 bytes: shape={packed.shape}")
+        if packed.shape[1] != 6:
+            raise ValueError(
+                f"expected 6 packed bytes for {BINARY_BITS} bits, got shape={packed.shape}"
+            )
         out = np.zeros((packed.shape[0], 8), dtype=np.uint8)
         out[:, : packed.shape[1]] = packed
         return out

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from alert_triage.encoders.base import BinaryCalibratorModel
+from .base import BINARY_BITS, BinaryCalibratorModel
 
 
 class BinaryCalibratorIO:
@@ -28,16 +28,24 @@ class BinaryCalibratorIO:
     @staticmethod
     def load(path: str | Path, *, expected_encoder_id: str | None = None) -> BinaryCalibratorModel:
         data = np.load(Path(path), allow_pickle=True)
+        rotation = BinaryCalibratorIO._normalize_rotation(data["rotation"])
         calibrator = BinaryCalibratorModel(
             thresholds=data["thresholds"],
-            rotation=data["rotation"] if "rotation" in data and data["rotation"].size else None,
+            rotation=rotation,
         )
+        stored_encoder_id = str(data["encoder_id"][0])
         if expected_encoder_id is not None:
-            stored = str(data["encoder_id"][0])
-            if stored != expected_encoder_id:
+            if stored_encoder_id != expected_encoder_id:
                 raise ValueError(
-                    f"encoder_id mismatch: stored={stored!r} expected={expected_encoder_id!r}"
+                    f"encoder_id mismatch: stored={stored_encoder_id!r} expected={expected_encoder_id!r}"
                 )
+        stored_checksum = str(data["checksum"][0])
+        expected_checksum = BinaryCalibratorIO.checksum(calibrator, stored_encoder_id)
+        if stored_checksum != expected_checksum:
+            raise ValueError(
+                "calibrator checksum mismatch: "
+                f"stored={stored_checksum!r} expected={expected_checksum!r}"
+            )
         return calibrator
 
     @staticmethod
@@ -48,3 +56,17 @@ class BinaryCalibratorIO:
         if calibrator.rotation is not None:
             h.update(np.asarray(calibrator.rotation, dtype=np.float32).tobytes())
         return h.hexdigest()
+
+    @staticmethod
+    def _normalize_rotation(rotation: np.ndarray) -> np.ndarray | None:
+        if rotation.shape == () and rotation.dtype == object and rotation.item() is None:
+            return None
+        if rotation.size == 0:
+            return None
+        rotation = np.asarray(rotation, dtype=np.float32)
+        if rotation.shape != (BINARY_BITS, BINARY_BITS):
+            raise ValueError(
+                "rotation matrix shape mismatch: "
+                f"expected {(BINARY_BITS, BINARY_BITS)} got {rotation.shape}"
+            )
+        return rotation

@@ -1,3 +1,4 @@
+use pyo3::exceptions::PyNotImplementedError;
 use pyo3::prelude::*;
 
 /// Register the Rust-side DataFusion UDF into a Python-owned SessionContext.
@@ -11,12 +12,9 @@ use pyo3::prelude::*;
 ///
 /// Pin all three together before expecting this to compile untouched.
 pub fn register(_py: Python<'_>, _ctx: PyObject) -> PyResult<()> {
-    // TODO:
-    // 1. downcast the python object to the version-specific SessionContext wrapper
-    // 2. use datafusion-ffi / exposed Rust handle access to get &mut SessionContext
-    // 3. call `ctx.register_udf(hamming_maxsim_udf::build_udf())`
-    //
-    // The UDF itself is fully implemented in `hamming_maxsim_udf`; this function is the
-    // only intentionally version-sensitive seam left as a stub.
-    Ok(())
+    Err(PyNotImplementedError::new_err(
+        "SessionContext registration is not implemented in phase-0. \
+        The Rust UDF contract is verified directly in the hamming_maxsim_udf crate; \
+        wire this bridge only after pinning matching Python datafusion and datafusion-ffi versions.",
+    ))
 }

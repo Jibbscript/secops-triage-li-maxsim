@@ -16,8 +16,9 @@ pub fn pick() -> InnerKernel {
     {
         // Intentionally prefer the scalar-unrolled baseline on Apple silicon until benchmarking proves
         // a hand-written NEON path is better for 8-byte operands.
-        return crate::scalar::hamming_min_scalar;
+        crate::scalar::hamming_min_scalar
     }
 
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     crate::scalar::hamming_min_scalar
 }

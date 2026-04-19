@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from alert_triage.retrievers._maxsim_ref import maxsim_cosine
-from alert_triage.retrievers.base import Candidate, QueryBundle, Retriever, TokenVectorStore
+from ._maxsim_ref import maxsim_cosine
+from .base import Candidate, QueryBundle, Retriever, TokenVectorStore
 
 
 @dataclass
@@ -24,6 +24,8 @@ class BinaryThenFP16RerankRetriever:
             raise ValueError("query.query_bin is required")
         if query.query_fp16 is None:
             raise ValueError("query.query_fp16 is required")
+        if k < 1:
+            raise ValueError("k must be >= 1")
 
         coarse = self.candidate_retriever.search(query, k=self.prefilter_top_n)
         if not coarse:
