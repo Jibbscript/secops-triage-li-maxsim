@@ -1,57 +1,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+
 import time
 
-import numpy as np
-
-from ._maxsim_ref import maxsim_cosine
 from .base import Candidate, QueryBundle, Retriever, TokenVectorStore
-
-
-def rerank_fp16_candidates(
-    *,
-    coarse: list[Candidate],
-    vector_store: TokenVectorStore,
-    query_fp16: np.ndarray,
-    k: int,
-    stage,
-    debug_score_key: str,
-) -> list[Candidate]:
-    doc_map = vector_store.fetch_fp16([candidate.alert_id for candidate in coarse])
-
-    rescored: list[Candidate] = []
-    for candidate in coarse:
-        doc = doc_map.get(candidate.alert_id)
-        if doc is None:
-            continue
-        rerank_score = float(maxsim_cosine(query_fp16, doc))
-        debug = dict(candidate.debug)
-        debug[debug_score_key] = candidate.score
-        rescored.append(
-            Candidate(
-                alert_id=candidate.alert_id,
-                score=rerank_score,
-                stage=stage,
-                debug=debug,
-            )
-        )
-
-    rescored.sort(key=lambda item: (-item.score, item.alert_id))
-    return rescored[:k]
+from .binary_rerank import rerank_fp16_candidates
 
 
 @dataclass
-class BinaryThenFP16RerankRetriever:
-    """Two-stage retrieval: binary Hamming candidate generation, then fp16 rerank."""
+class HybridBM25ThenFP16RerankRetriever:
+    """Two-stage retrieval: lexical candidate generation, then fp16 rerank."""
 
     candidate_retriever: Retriever
     vector_store: TokenVectorStore
     prefilter_top_n: int = 200
-    id: str = "binary-then-fp16-rerank"
+    id: str = "hybrid-bm25-then-fp16-rerank"
 
     def index(self, alert_ids, docs, texts=None) -> None:
-        # Delegated to the underlying stores and candidate retriever.
+        # Delegated to the underlying candidate retriever and vector store.
         return None
 
     def search(self, query: QueryBundle, k: int = 10) -> list[Candidate]:
@@ -59,8 +26,8 @@ class BinaryThenFP16RerankRetriever:
         return hits
 
     def search_with_timings(self, query: QueryBundle, k: int = 10) -> tuple[list[Candidate], dict[str, float]]:
-        if query.query_bin is None:
-            raise ValueError("query.query_bin is required")
+        if query.query_text is None:
+            raise ValueError("query.query_text is required")
         if query.query_fp16 is None:
             raise ValueError("query.query_fp16 is required")
         if k < 1:
@@ -78,8 +45,8 @@ class BinaryThenFP16RerankRetriever:
             vector_store=self.vector_store,
             query_fp16=query.query_fp16,
             k=k,
-            stage="fp16_maxsim",
-            debug_score_key="binary_score",
+            stage="hybrid",
+            debug_score_key="bm25_score",
         )
         rerank_ms = (time.perf_counter() - rerank_started) * 1000.0
         return hits, {"candidate_ms": candidate_ms, "rerank_ms": rerank_ms}
