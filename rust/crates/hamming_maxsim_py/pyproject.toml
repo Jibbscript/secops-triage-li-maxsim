@@ -7,3 +7,10 @@ name = "hamming-maxsim-py"
 version = "0.1.0"
 description = "python bindings for binary hamming maxsim udf registration"
 requires-python = ">=3.11"
+
+[project.optional-dependencies]
+dev = [
+  "datafusion==48.0.0",
+  "maturin>=1.7,<2.0",
+  "pytest>=8,<9",
+]

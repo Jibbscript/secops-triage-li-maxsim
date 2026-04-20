@@ -4,9 +4,40 @@ from dataclasses import dataclass, field
 from typing import Literal, Protocol, Sequence, runtime_checkable
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from alert_triage.encoders.base import EncodedTokens
+
+
+FilterScalar = str | int | float | bool
+FilterValue = FilterScalar | tuple[FilterScalar, ...]
+FilterOperator = Literal["eq", "ne", "lt", "lte", "gt", "gte", "in", "not_in"]
+
+
+class FilterClause(BaseModel):
+    """Typed filter shell reserved for later lowering work."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    field: str
+    op: FilterOperator
+    value: FilterValue
+
+
+class QueryFilter(BaseModel):
+    """Placeholder structured filter contract.
+
+    Phase-1 keeps this as a typed boundary only. Later phases will lower these
+    clauses into storage-specific execution paths.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    clauses: tuple[FilterClause, ...] = ()
+    combinator: Literal["and"] = "and"
+
+    def is_noop(self) -> bool:
+        return len(self.clauses) == 0
 
 
 class QueryBundle(BaseModel):
@@ -18,7 +49,16 @@ class QueryBundle(BaseModel):
     query_text: str | None = None
     query_fp16: np.ndarray | None = None
     query_bin: np.ndarray | None = None
+    filter: QueryFilter | None = None
     filter_expr: str | None = None
+
+    @model_validator(mode="after")
+    def reject_raw_filter_expr(self) -> "QueryBundle":
+        if self.filter_expr is not None:
+            raise ValueError(
+                "Raw SQL filter strings are not supported in phase-1; use QueryBundle.filter."
+            )
+        return self
 
 
 StageName = Literal["bm25", "binary_hamming", "fp16_maxsim", "hybrid"]
@@ -72,3 +112,10 @@ class Retriever(Protocol):
 
     def size(self) -> int:
         ...
+
+
+def reject_unsupported_filter(query: QueryBundle) -> None:
+    """Guard the typed filter boundary until lowering exists."""
+
+    if query.filter is not None and not query.filter.is_noop():
+        raise NotImplementedError("Structured filters are not supported in phase-1.")

@@ -25,6 +25,8 @@ build/
 *.egg-info/
 .coverage
 htmlcov/
+data/runs/
+rust/crates/hamming_maxsim_py/.venv-bridge*/
 
 # Rust local/build artifacts
 target/

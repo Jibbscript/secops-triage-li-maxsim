@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .base import Candidate, QueryBundle
+from .base import Candidate, QueryBundle, reject_unsupported_filter
 
 
 @dataclass
@@ -34,11 +34,11 @@ class HammingUDFRetriever:
             raise ValueError("query.query_bin is required for HammingUDFRetriever")
         if k < 1:
             raise ValueError("k must be >= 1")
+        reject_unsupported_filter(query)
 
         sql = f"""
         select _rowid, hamming_maxsim(?, mv_bin) as score
         from {self.table_name}
-        {f"where {query.filter_expr}" if query.filter_expr else ""}
         order by score desc
         limit {k}
         """
