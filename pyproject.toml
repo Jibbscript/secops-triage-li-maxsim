@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "alert-triage-li"
 version = "0.1.0"
-description = "Phase-3 retrieval surface slice for dual-lane late-interaction alert triage retrieval."
+description = "Phase-4 triage evaluation slice for dual-lane late-interaction alert triage retrieval."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

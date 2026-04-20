@@ -1,6 +1,6 @@
-# alert-triage-li phase-3 retrieval surface slice
+# alert-triage-li phase-4 triage evaluation slice
 
-This repository currently implements the phase-3 slice of the merged
+This repository currently implements the phase-4 slice of the merged
 `alert-triage-li` + `binary hamming maxsim` design:
 
 - Python encoder and retriever contracts
@@ -16,17 +16,21 @@ This repository currently implements the phase-3 slice of the merged
 - file-backed `lance-mv` adapter surface for fp16 maxsim over a Lance-shaped corpus contract
 - staged `hybrid-bm25-then-fp16-rerank` integration
 - phase-3 retrieval comparison harness spanning lexical, fp16, binary, and staged lanes
+- deterministic phase-4 tier-2 reasoning harness over `binary-then-fp16-rerank`
+- deterministic phase-4 tier-3 disposition scoring harness
+- audit and terminality trace artifacts for the local triage lane
 - phase-2 paired fp16-vs-binary performance harness
 - Rust kernel, DataFusion UDF, and PyO3 shim crates
-- phase-1/phase-2/phase-3 unit, contract, and integration tests for the exercised slice
+- phase-1 through phase-4 unit, contract, and integration tests for the exercised slice
 
 What is intentionally not here yet:
 
 - ingestion connectors
-- the full evaluation harness from `eval_bundle.yaml`
 - the upstream Lance package / storage engine; the current `lance-mv` surface is an
   executable Arrow-backed adapter boundary, not a production Lance dependency
-- agent orchestration and MCP wiring
+- live provider-backed LLM execution or production MCP wiring; the current
+  phase-4 slice is a deterministic local harness that preserves the report and
+  audit boundaries without claiming external service integration
 - benchmark sweep infrastructure beyond the minimum real phase-2 workload
 
 ## Local verification
@@ -53,11 +57,21 @@ python3 -m venv .venv
   --rerank-depth 2 \
   --out-json data/runs/reports/tier1_phase3.json \
   --out-latency data/runs/reports/latency_phase3.csv
+.venv/bin/python -m alert_triage.evals.tier2_phase4 \
+  --fixture-dir tests/fixtures/phase1_tier1 \
+  --threads 1 \
+  --rerank-depth 2 \
+  --out-json data/runs/reports/tier2.json \
+  --out-trace data/runs/traces/tier2_trace.jsonl
+.venv/bin/python -m alert_triage.evals.tier3_phase4 \
+  --fixture-dir tests/fixtures/phase1_tier1 \
+  --tier2-json data/runs/reports/tier2.json \
+  --out-json data/runs/reports/tier3.json
 cargo test --workspace --manifest-path rust/Cargo.toml
 cargo bench -p hamming_maxsim_kernel --manifest-path rust/Cargo.toml --bench kernel_bench
 ```
 
-## Phase-3 status
+## Phase-4 status
 
 - The executable retrieval claim now includes `bm25`, `lance-mv`,
   `hamming-udf-bin`, `binary-then-fp16-rerank`, and
@@ -68,11 +82,15 @@ cargo bench -p hamming_maxsim_kernel --manifest-path rust/Cargo.toml --bench ker
 - Raw SQL filter strings are still rejected at the shared `QueryBundle`
   boundary, and phase-2 lowers the typed filter shell into the binary retrieval
   path for the allowlisted operators exercised by the tests.
-- The repo still does not claim tier-2 reasoning, tier-3 disposition, audit
-  wiring, or full eval-bundle coverage. Those remain phase-4 work.
+- The repo now ships a deterministic local tier-2/tier-3 harness over the
+  checked-in fixture pack. It emits reasoning metrics, disposition metrics, and
+  audit/terminality traces without claiming live provider-backed LLM execution.
 
 See `/Users/jbz/src/secops-triage-li-maxsim/docs/phase1.md` for the phase-1
 fixture details, `/Users/jbz/src/secops-triage-li-maxsim/docs/phase3.md` for the
-Phase-3 retrieval-surface notes, `data/runs/reports/tier1_phase2_perf.json` for
-the minimum phase-2 paired performance artifact, and
-`data/runs/reports/tier1_phase3.json` for the phase-3 comparison artifact.
+Phase-3 retrieval-surface notes, `/Users/jbz/src/secops-triage-li-maxsim/docs/phase4.md`
+for the phase-4 triage harness notes, `data/runs/reports/tier1_phase2_perf.json`
+for the minimum phase-2 paired performance artifact,
+`data/runs/reports/tier1_phase3.json` for the phase-3 comparison artifact,
+`data/runs/reports/tier2.json` for the phase-4 reasoning artifact, and
+`data/runs/reports/tier3.json` for the phase-4 disposition artifact.

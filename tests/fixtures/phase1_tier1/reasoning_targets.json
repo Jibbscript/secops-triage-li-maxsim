@@ -1,0 +1,18 @@
+{
+  "query-1": {
+    "expected_action": "reset_credentials_and_scope_phishing",
+    "expected_disposition": "credential_reset",
+    "expected_evidence_ids": [
+      "alert-1"
+    ],
+    "rationale_keyword": "phishing"
+  },
+  "query-2": {
+    "expected_action": "isolate_host_and_block_beacon",
+    "expected_disposition": "contain_host",
+    "expected_evidence_ids": [
+      "alert-2"
+    ],
+    "rationale_keyword": "ransomware"
+  }
+}
