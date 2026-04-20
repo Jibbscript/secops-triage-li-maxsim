@@ -180,6 +180,7 @@ class RuleBasedTriageEngine:
             kind="model_call",
             name=self.model_id,
             inputs={
+                "role": "triager",
                 "query_text": query_text,
                 "retrieved_alert_ids": [hit.alert_id for hit in evidence],
             },
@@ -228,6 +229,7 @@ class RuleBasedJudge:
             kind="model_call",
             name=self.model_id,
             inputs={
+                "role": "judge",
                 "query_id": query_id,
                 "query_text": query_text,
                 "retrieved_alert_ids": [hit.alert_id for hit in evidence],
@@ -251,6 +253,7 @@ class ReplayTriageEngine:
             kind="model_call",
             name=self.model_id,
             inputs={
+                "role": "triager",
                 "query_text": query_text,
                 "retrieved_alert_ids": [hit.alert_id for hit in evidence],
             },
@@ -281,6 +284,7 @@ class ReplayJudge:
             kind="model_call",
             name=self.model_id,
             inputs={
+                "role": "judge",
                 "query_id": query_id,
                 "query_text": query_text,
                 "retrieved_alert_ids": [hit.alert_id for hit in evidence],

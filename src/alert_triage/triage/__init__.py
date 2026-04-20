@@ -1,5 +1,14 @@
 from .audit import AuditRecord, TraceSummary, summarize_audit, write_trace_jsonl
 from .disposition import compute_disposition_metrics, load_analyst_labels
+from .provider_runtime import (
+    AnthropicJudge,
+    AnthropicTriageEngine,
+    JSONTransport,
+    OpenAIResponsesJudge,
+    OpenAIResponsesTriageEngine,
+    UrllibJSONTransport,
+    build_provider_runtimes,
+)
 from .reasoning import (
     EvidenceHit,
     InvestigationStepToolRuntime,
@@ -21,9 +30,14 @@ from .reasoning import (
 
 __all__ = [
     "AuditRecord",
+    "AnthropicJudge",
+    "AnthropicTriageEngine",
     "EvidenceHit",
     "InvestigationStepToolRuntime",
+    "JSONTransport",
     "JudgeRuntime",
+    "OpenAIResponsesJudge",
+    "OpenAIResponsesTriageEngine",
     "ReplayJudge",
     "ReplayRuntimeFixture",
     "ReplayRuntimeSample",
@@ -36,6 +50,8 @@ __all__ = [
     "TraceSummary",
     "TriageDecision",
     "TriageRuntime",
+    "UrllibJSONTransport",
+    "build_provider_runtimes",
     "compute_disposition_metrics",
     "load_analyst_labels",
     "load_reasoning_targets",

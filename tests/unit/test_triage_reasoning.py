@@ -44,6 +44,7 @@ def test_rule_based_reasoning_emits_terminal_tool_call_and_audit_records() -> No
     assert sample.terminal_tool == "propose_investigation_step"
     assert [record.kind for record in sample.audit_records] == ["model_call", "model_call", "tool_call"]
     assert sample.audit_records[-1].name == "propose_investigation_step"
+    assert [record.inputs.get("role") for record in sample.audit_records[:2]] == ["triager", "judge"]
     assert sample.sample_metrics["action_validity"] == 1.0
     assert sample.sample_metrics["evidence_grounding"] == 1.0
 
@@ -79,6 +80,7 @@ def test_replay_runtime_emits_fixture_backed_audit_records() -> None:
         "replay:fixture-judge-v1",
         "propose_investigation_step",
     ]
+    assert [record.inputs.get("role") for record in sample.audit_records[:2]] == ["triager", "judge"]
     assert sample.sample_metrics["specificity"] == 1.0
 
 

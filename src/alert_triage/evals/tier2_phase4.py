@@ -18,11 +18,13 @@ from alert_triage.triage import (
     EvidenceHit,
     InvestigationStepToolRuntime,
     JudgeRuntime,
+    JSONTransport,
     ReplayJudge,
     ReplayTriageEngine,
     RuleBasedJudge,
     RuleBasedTriageEngine,
     TriageRuntime,
+    build_provider_runtimes,
     load_reasoning_targets,
     load_replay_runtime_fixture,
     summarize_audit,
@@ -38,10 +40,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--out-trace", type=Path, required=True)
     parser.add_argument("--threads", type=int, default=1)
     parser.add_argument("--rerank-depth", type=int, default=2)
-    parser.add_argument("--runtime", choices=("local", "replay"), default="local")
+    parser.add_argument("--runtime", choices=("local", "replay", "openai", "anthropic"), default="local")
     parser.add_argument("--runtime-fixture", type=Path)
     parser.add_argument("--llm-model", default=RuleBasedTriageEngine.default_model_id)
     parser.add_argument("--judge-model", default=RuleBasedJudge.default_model_id)
+    parser.add_argument("--api-key-env")
+    parser.add_argument("--api-base-url")
+    parser.add_argument("--timeout-seconds", type=float, default=30.0)
     return parser.parse_args()
 
 
@@ -79,6 +84,11 @@ def _build_reasoning_runtimes(
     llm_model: str,
     judge_model: str,
     runtime_fixture: Path | None,
+    api_key: str | None = None,
+    api_key_env: str | None = None,
+    api_base_url: str | None = None,
+    timeout_seconds: float = 30.0,
+    transport: JSONTransport | None = None,
 ) -> tuple[TriageRuntime, JudgeRuntime, InvestigationStepToolRuntime]:
     if runtime == "local":
         return (
@@ -95,6 +105,30 @@ def _build_reasoning_runtimes(
             ReplayJudge(fixture=fixture, model_id=judge_model),
             InvestigationStepToolRuntime(),
         )
+    if runtime == "openai":
+        triager, judge = build_provider_runtimes(
+            runtime=runtime,
+            llm_model="openai:gpt-5" if llm_model == RuleBasedTriageEngine.default_model_id else llm_model,
+            judge_model="openai:gpt-5" if judge_model == RuleBasedJudge.default_model_id else judge_model,
+            api_key=api_key,
+            api_key_env=api_key_env,
+            api_base_url=api_base_url,
+            timeout_seconds=timeout_seconds,
+            transport=transport,
+        )
+        return triager, judge, InvestigationStepToolRuntime()
+    if runtime == "anthropic":
+        triager, judge = build_provider_runtimes(
+            runtime=runtime,
+            llm_model="anthropic:claude-sonnet-4-5" if llm_model == RuleBasedTriageEngine.default_model_id else llm_model,
+            judge_model="anthropic:claude-sonnet-4-5" if judge_model == RuleBasedJudge.default_model_id else judge_model,
+            api_key=api_key,
+            api_key_env=api_key_env,
+            api_base_url=api_base_url,
+            timeout_seconds=timeout_seconds,
+            transport=transport,
+        )
+        return triager, judge, InvestigationStepToolRuntime()
     raise ValueError(f"unsupported runtime: {runtime}")
 
 
@@ -109,6 +143,11 @@ def run_phase4_reasoning(
     runtime_fixture: Path | None = None,
     llm_model: str,
     judge_model: str,
+    api_key: str | None = None,
+    api_key_env: str | None = None,
+    api_base_url: str | None = None,
+    timeout_seconds: float = 30.0,
+    transport: JSONTransport | None = None,
 ) -> dict[str, object]:
     if threads < 1:
         raise ValueError("threads must be >= 1")
@@ -130,6 +169,11 @@ def run_phase4_reasoning(
         llm_model=llm_model,
         judge_model=judge_model,
         runtime_fixture=runtime_fixture,
+        api_key=api_key,
+        api_key_env=api_key_env,
+        api_base_url=api_base_url,
+        timeout_seconds=timeout_seconds,
+        transport=transport,
     )
     samples = []
 
@@ -168,6 +212,7 @@ def run_phase4_reasoning(
     summary = summarize_audit(
         [sample.audit_records for sample in samples],
         expected_llm_names={triager.model_id, judge.model_id},
+        expected_llm_roles={"triager", "judge"},
     )
     terminality_ok = all(
         sample.audit_records[-1].kind == "tool_call"
@@ -217,6 +262,9 @@ def main() -> None:
         runtime_fixture=args.runtime_fixture,
         llm_model=args.llm_model,
         judge_model=args.judge_model,
+        api_key_env=args.api_key_env,
+        api_base_url=args.api_base_url,
+        timeout_seconds=args.timeout_seconds,
     )
 
 

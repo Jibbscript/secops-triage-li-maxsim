@@ -3,6 +3,9 @@
 Phase-5 makes the Phase-4 triage harness provider-ready without claiming live
 provider or production MCP execution.
 
+Phase-5 remains the seam slice. Current live-provider adapter details now live
+in `/Users/jbz/src/secops-triage-li-maxsim/docs/phase6.md`.
+
 ## Included runtime seams
 
 - explicit triage, judge, and terminal-tool runtime interfaces

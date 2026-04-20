@@ -30,6 +30,7 @@ def summarize_audit(
     records_by_sample: Sequence[Sequence[AuditRecord]],
     *,
     expected_llm_names: set[str],
+    expected_llm_roles: set[str] | None = None,
     expected_tool_names: set[str] | None = None,
 ) -> TraceSummary:
     tool_expectations = expected_tool_names or {"propose_investigation_step"}
@@ -37,8 +38,15 @@ def summarize_audit(
     missing_tool = 0
     for records in records_by_sample:
         llm_names = {record.name for record in records if record.kind == "model_call"}
+        llm_roles = {
+            str(record.inputs.get("role"))
+            for record in records
+            if record.kind == "model_call" and isinstance(record.inputs.get("role"), str)
+        }
         tool_names = {record.name for record in records if record.kind == "tool_call"}
         missing_llm += len(expected_llm_names - llm_names)
+        if expected_llm_roles is not None:
+            missing_llm += len(expected_llm_roles - llm_roles)
         missing_tool += len(tool_expectations - tool_names)
     return TraceSummary(
         orphan_llm_calls=missing_llm,
