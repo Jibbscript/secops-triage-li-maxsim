@@ -5,11 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "alert-triage-li"
 version = "0.1.0"
-description = "Phase-0 scaffold for dual-lane late-interaction alert triage retrieval."
+description = "Phase-2 binary integration slice for dual-lane late-interaction alert triage retrieval."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "datafusion==48.0.0",
   "numpy>=1.26,<3",
+  "pyarrow>=23,<24",
   "pydantic>=2.7,<3",
 ]
 

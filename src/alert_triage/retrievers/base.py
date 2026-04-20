@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import reduce
 from typing import Literal, Protocol, Sequence, runtime_checkable
 
 import numpy as np
@@ -119,3 +120,43 @@ def reject_unsupported_filter(query: QueryBundle) -> None:
 
     if query.filter is not None and not query.filter.is_noop():
         raise NotImplementedError("Structured filters are not supported in phase-1.")
+
+
+def lower_structured_filter(query_filter: QueryFilter | None):
+    """Lower an allowlisted structured filter into a DataFusion expression."""
+
+    if query_filter is None or query_filter.is_noop():
+        return None
+
+    from datafusion import col, lit
+
+    def lower_clause(clause: FilterClause):
+        field = col(clause.field)
+        value = clause.value
+
+        if clause.op in {"in", "not_in"}:
+            if not isinstance(value, tuple) or len(value) == 0:
+                raise ValueError(f"{clause.op} filters require a non-empty tuple value")
+            comparisons = [(field == lit(item)) for item in value]
+            if clause.op == "in":
+                return reduce(lambda left, right: left | right, comparisons)
+            return reduce(lambda left, right: left & right, ((field != lit(item)) for item in value))
+
+        if isinstance(value, tuple):
+            raise ValueError(f"{clause.op} filters do not accept tuple values")
+        if clause.op == "eq":
+            return field == lit(value)
+        if clause.op == "ne":
+            return field != lit(value)
+        if clause.op == "lt":
+            return field < lit(value)
+        if clause.op == "lte":
+            return field <= lit(value)
+        if clause.op == "gt":
+            return field > lit(value)
+        if clause.op == "gte":
+            return field >= lit(value)
+        raise ValueError(f"unsupported filter operator: {clause.op}")
+
+    lowered = [lower_clause(clause) for clause in query_filter.clauses]
+    return reduce(lambda left, right: left & right, lowered)

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ._maxsim_ref import maxsim_cosine
-from .base import Candidate, QueryBundle, Retriever, TokenVectorStore, reject_unsupported_filter
+from .base import Candidate, QueryBundle, Retriever, TokenVectorStore
 
 
 @dataclass
@@ -26,7 +26,6 @@ class BinaryThenFP16RerankRetriever:
             raise ValueError("query.query_fp16 is required")
         if k < 1:
             raise ValueError("k must be >= 1")
-        reject_unsupported_filter(query)
 
         coarse = self.candidate_retriever.search(query, k=self.prefilter_top_n)
         if not coarse:
@@ -49,7 +48,7 @@ class BinaryThenFP16RerankRetriever:
                 )
             )
 
-        rescored.sort(key=lambda x: x.score, reverse=True)
+        rescored.sort(key=lambda candidate: (-candidate.score, candidate.alert_id))
         return rescored[:k]
 
     def size(self) -> int:

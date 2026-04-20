@@ -12,5 +12,6 @@ requires-python = ">=3.11"
 dev = [
   "datafusion==48.0.0",
   "maturin>=1.7,<2.0",
+  "pyarrow>=23,<24",
   "pytest>=8,<9",
 ]

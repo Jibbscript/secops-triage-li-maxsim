@@ -3,7 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .base import Candidate, QueryBundle, reject_unsupported_filter
+from datafusion import col, lit
+
+from .base import Candidate, QueryBundle, lower_structured_filter
+from .hamming_udf_runtime import binary_tokens_to_scalar, build_hamming_maxsim_udf
 
 
 @dataclass
@@ -34,17 +37,22 @@ class HammingUDFRetriever:
             raise ValueError("query.query_bin is required for HammingUDFRetriever")
         if k < 1:
             raise ValueError("k must be >= 1")
-        reject_unsupported_filter(query)
+        query_scalar = binary_tokens_to_scalar(query.query_bin)
+        df = self.ctx.table(self.table_name)
+        filter_expr = lower_structured_filter(query.filter)
+        if filter_expr is not None:
+            df = df.filter(filter_expr)
 
-        sql = f"""
-        select _rowid, hamming_maxsim(?, mv_bin) as score
-        from {self.table_name}
-        order by score desc
-        limit {k}
-        """
-
-        table = self.ctx.sql(sql, params=[query.query_bin]).to_arrow_table()
-        rows = table.to_pylist()
+        rows = (
+            df.with_column("__query_bin", lit(query_scalar))
+            .select(
+                col("_rowid"),
+                build_hamming_maxsim_udf()(col("__query_bin"), col("mv_bin")).alias("score"),
+            )
+            .sort(col("score").sort(ascending=False, nulls_first=False), col("_rowid").sort())
+            .limit(k)
+            .to_pylist()
+        )
 
         out: list[Candidate] = []
         for row in rows:
@@ -63,6 +71,4 @@ class HammingUDFRetriever:
         return out
 
     def size(self) -> int:
-        table = self.ctx.sql(f"select count(*) as n from {self.table_name}").to_arrow_table()
-        rows = table.to_pylist()
-        return int(rows[0]["n"])
+        return int(self.ctx.table(self.table_name).count())
