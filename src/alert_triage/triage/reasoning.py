@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Sequence
+from typing import Protocol, Sequence
 
 from pydantic import BaseModel, ConfigDict
 
@@ -27,6 +27,18 @@ class EvidenceHit(BaseModel):
     text: str
 
 
+class TriageDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    query_id: str
+    query_text: str
+    action: str
+    disposition: str
+    confidence: float
+    rationale: str
+    cited_evidence_ids: tuple[str, ...]
+
+
 class ReasoningSampleResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -45,6 +57,59 @@ class ReasoningSampleResult(BaseModel):
     audit_records: tuple[AuditRecord, ...]
 
 
+class ReplayRuntimeSample(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: TriageDecision
+    scores: dict[str, float]
+
+
+class ReplayRuntimeFixture(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    llm_model: str
+    judge_model: str
+    samples: dict[str, ReplayRuntimeSample]
+
+
+class TriageRuntime(Protocol):
+    model_id: str
+
+    def decide(
+        self,
+        *,
+        query_id: str,
+        query_text: str,
+        evidence: Sequence[EvidenceHit],
+    ) -> tuple[TriageDecision, AuditRecord]: ...
+
+
+class JudgeRuntime(Protocol):
+    model_id: str
+
+    def evaluate(
+        self,
+        *,
+        query_id: str,
+        query_text: str,
+        decision: TriageDecision,
+        evidence: Sequence[EvidenceHit],
+        target: "ReasoningTarget",
+    ) -> tuple[dict[str, float], AuditRecord]: ...
+
+
+class TerminalToolRuntime(Protocol):
+    tool_name: str
+
+    def emit(
+        self,
+        *,
+        query_id: str,
+        query_text: str,
+        decision: TriageDecision,
+    ) -> AuditRecord: ...
+
+
 def load_reasoning_targets(path: Path) -> dict[str, ReasoningTarget]:
     payload = json.loads(path.read_text())
     return {
@@ -53,13 +118,24 @@ def load_reasoning_targets(path: Path) -> dict[str, ReasoningTarget]:
     }
 
 
+def load_replay_runtime_fixture(path: Path) -> ReplayRuntimeFixture:
+    return ReplayRuntimeFixture.model_validate(json.loads(path.read_text()))
+
+
+def _replay_sample(fixture: ReplayRuntimeFixture, query_id: str, *, kind: str) -> ReplayRuntimeSample:
+    sample = fixture.samples.get(query_id)
+    if sample is None:
+        raise ValueError(f"missing replay {kind} fixture for {query_id}")
+    return sample
+
+
 class RuleBasedTriageEngine:
     default_model_id = "local:deterministic-triager-v1"
 
     def __init__(self, model_id: str | None = None) -> None:
         self.model_id = model_id or self.default_model_id
 
-    def decide(self, *, query_id: str, query_text: str, evidence: Sequence[EvidenceHit]) -> tuple[dict[str, object], AuditRecord]:
+    def decide(self, *, query_id: str, query_text: str, evidence: Sequence[EvidenceHit]) -> tuple[TriageDecision, AuditRecord]:
         lowered_query = query_text.lower()
         evidence_text = " ".join(hit.text.lower() for hit in evidence)
         top_hit_ids = tuple(hit.alert_id for hit in evidence[:2])
@@ -91,15 +167,15 @@ class RuleBasedTriageEngine:
             rationale = "The retrieved evidence is not specific enough yet, so the next step is bounded investigation."
 
         cited_evidence_ids = top_hit_ids if top_hit_ids else tuple(hit.alert_id for hit in evidence[:1])
-        payload = {
-            "query_id": query_id,
-            "query_text": query_text,
-            "action": action,
-            "disposition": disposition,
-            "confidence": confidence,
-            "rationale": rationale,
-            "cited_evidence_ids": cited_evidence_ids,
-        }
+        payload = TriageDecision(
+            query_id=query_id,
+            query_text=query_text,
+            action=action,
+            disposition=disposition,
+            confidence=confidence,
+            rationale=rationale,
+            cited_evidence_ids=cited_evidence_ids,
+        )
         audit = AuditRecord(
             kind="model_call",
             name=self.model_id,
@@ -107,7 +183,7 @@ class RuleBasedTriageEngine:
                 "query_text": query_text,
                 "retrieved_alert_ids": [hit.alert_id for hit in evidence],
             },
-            outputs=payload,
+            outputs=payload.model_dump(mode="json"),
         )
         return payload, audit
 
@@ -123,25 +199,25 @@ class RuleBasedJudge:
         *,
         query_id: str,
         query_text: str,
-        decision: dict[str, object],
+        decision: TriageDecision,
         evidence: Sequence[EvidenceHit],
         target: ReasoningTarget,
     ) -> tuple[dict[str, float], AuditRecord]:
         retrieved_ids = {hit.alert_id for hit in evidence}
-        cited_ids = tuple(str(alert_id) for alert_id in decision["cited_evidence_ids"])
-        action_validity = 1.0 if decision["action"] == target.expected_action else 0.0
+        cited_ids = decision.cited_evidence_ids
+        action_validity = 1.0 if decision.action == target.expected_action else 0.0
         grounded_hits = sum(alert_id in target.expected_evidence_ids for alert_id in cited_ids)
         evidence_grounding = grounded_hits / len(target.expected_evidence_ids) if target.expected_evidence_ids else 0.0
         if any(alert_id not in retrieved_ids for alert_id in cited_ids):
             evidence_grounding = 0.0
 
-        rationale = str(decision["rationale"]).lower()
+        rationale = decision.rationale.lower()
         specificity = 1.0 if target.rationale_keyword.lower() in rationale and len(cited_ids) > 0 else 0.0
         correctness = 1.0 if (
-            decision["action"] == target.expected_action
-            and decision["disposition"] == target.expected_disposition
+            decision.action == target.expected_action
+            and decision.disposition == target.expected_disposition
         ) else 0.0
-        calibration = max(0.0, 1.0 - abs(float(decision["confidence"]) - correctness))
+        calibration = max(0.0, 1.0 - abs(decision.confidence - correctness))
         scores = {
             "action_validity": action_validity,
             "evidence_grounding": evidence_grounding,
@@ -161,15 +237,95 @@ class RuleBasedJudge:
         return scores, audit
 
 
+class ReplayTriageEngine:
+    default_model_id = "replay:fixture-triager-v1"
+
+    def __init__(self, fixture: ReplayRuntimeFixture, model_id: str | None = None) -> None:
+        self._fixture = fixture
+        self.model_id = model_id or fixture.llm_model or self.default_model_id
+
+    def decide(self, *, query_id: str, query_text: str, evidence: Sequence[EvidenceHit]) -> tuple[TriageDecision, AuditRecord]:
+        sample = _replay_sample(self._fixture, query_id, kind="decision")
+        payload = sample.decision
+        audit = AuditRecord(
+            kind="model_call",
+            name=self.model_id,
+            inputs={
+                "query_text": query_text,
+                "retrieved_alert_ids": [hit.alert_id for hit in evidence],
+            },
+            outputs=payload.model_dump(mode="json"),
+        )
+        return payload, audit
+
+
+class ReplayJudge:
+    default_model_id = "replay:fixture-judge-v1"
+
+    def __init__(self, fixture: ReplayRuntimeFixture, model_id: str | None = None) -> None:
+        self._fixture = fixture
+        self.model_id = model_id or fixture.judge_model or self.default_model_id
+
+    def evaluate(
+        self,
+        *,
+        query_id: str,
+        query_text: str,
+        decision: TriageDecision,
+        evidence: Sequence[EvidenceHit],
+        target: ReasoningTarget,
+    ) -> tuple[dict[str, float], AuditRecord]:
+        sample = _replay_sample(self._fixture, query_id, kind="judge")
+        scores = {metric: float(value) for metric, value in sample.scores.items()}
+        audit = AuditRecord(
+            kind="model_call",
+            name=self.model_id,
+            inputs={
+                "query_id": query_id,
+                "query_text": query_text,
+                "retrieved_alert_ids": [hit.alert_id for hit in evidence],
+            },
+            outputs=scores,
+        )
+        return scores, audit
+
+
+class InvestigationStepToolRuntime:
+    tool_name = "propose_investigation_step"
+
+    def emit(
+        self,
+        *,
+        query_id: str,
+        query_text: str,
+        decision: TriageDecision,
+    ) -> AuditRecord:
+        return AuditRecord(
+            kind="tool_call",
+            name=self.tool_name,
+            inputs={
+                "query_id": query_id,
+                "query_text": query_text,
+            },
+            outputs={
+                "action": decision.action,
+                "disposition": decision.disposition,
+                "cited_evidence_ids": decision.cited_evidence_ids,
+            },
+        )
+
+
 def build_reasoning_sample(
     *,
     query_id: str,
     query_text: str,
     evidence: Sequence[EvidenceHit],
     target: ReasoningTarget,
-    triager: RuleBasedTriageEngine,
-    judge: RuleBasedJudge,
+    triager: TriageRuntime,
+    judge: JudgeRuntime,
+    terminal_tool: TerminalToolRuntime | None = None,
 ) -> ReasoningSampleResult:
+    terminal_tool = terminal_tool or InvestigationStepToolRuntime()
     decision, triager_audit = triager.decide(query_id=query_id, query_text=query_text, evidence=evidence)
     sample_metrics, judge_audit = judge.evaluate(
         query_id=query_id,
@@ -178,29 +334,17 @@ def build_reasoning_sample(
         evidence=evidence,
         target=target,
     )
-    tool_audit = AuditRecord(
-        kind="tool_call",
-        name="propose_investigation_step",
-        inputs={
-            "query_id": query_id,
-            "query_text": query_text,
-        },
-        outputs={
-            "action": decision["action"],
-            "disposition": decision["disposition"],
-            "cited_evidence_ids": decision["cited_evidence_ids"],
-        },
-    )
+    tool_audit = terminal_tool.emit(query_id=query_id, query_text=query_text, decision=decision)
     return ReasoningSampleResult(
         query_id=query_id,
         query_text=query_text,
         retrieved_alert_ids=tuple(hit.alert_id for hit in evidence),
         evidence=tuple(evidence),
-        action=str(decision["action"]),
-        disposition=str(decision["disposition"]),
-        confidence=float(decision["confidence"]),
-        rationale=str(decision["rationale"]),
-        cited_evidence_ids=tuple(str(alert_id) for alert_id in decision["cited_evidence_ids"]),
+        action=decision.action,
+        disposition=decision.disposition,
+        confidence=decision.confidence,
+        rationale=decision.rationale,
+        cited_evidence_ids=decision.cited_evidence_ids,
         sample_metrics=sample_metrics,
         audit_records=(triager_audit, judge_audit, tool_audit),
     )

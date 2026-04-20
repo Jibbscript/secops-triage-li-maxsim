@@ -1,0 +1,44 @@
+{
+  "judge_model": "replay:fixture-judge-v1",
+  "llm_model": "replay:fixture-triager-v1",
+  "samples": {
+    "query-1": {
+      "decision": {
+        "action": "reset_credentials_and_scope_phishing",
+        "cited_evidence_ids": [
+          "alert-1"
+        ],
+        "confidence": 0.91,
+        "disposition": "credential_reset",
+        "query_id": "query-1",
+        "query_text": "Investigate credential phishing activity around suspicious inbox forwarding.",
+        "rationale": "Phishing evidence in the retrieved alert supports a scoped credential reset."
+      },
+      "scores": {
+        "action_validity": 1.0,
+        "calibration": 0.91,
+        "evidence_grounding": 1.0,
+        "specificity": 1.0
+      }
+    },
+    "query-2": {
+      "decision": {
+        "action": "isolate_host_and_block_beacon",
+        "cited_evidence_ids": [
+          "alert-2"
+        ],
+        "confidence": 0.94,
+        "disposition": "contain_host",
+        "query_id": "query-2",
+        "query_text": "Investigate ransomware beaconing and lateral movement from the finance subnet.",
+        "rationale": "Ransomware beacon evidence supports host isolation before deeper investigation."
+      },
+      "scores": {
+        "action_validity": 1.0,
+        "calibration": 0.94,
+        "evidence_grounding": 1.0,
+        "specificity": 1.0
+      }
+    }
+  }
+}

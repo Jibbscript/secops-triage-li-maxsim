@@ -1,6 +1,6 @@
-# alert-triage-li phase-4 triage evaluation slice
+# alert-triage-li phase-5 triage runtime seam slice
 
-This repository currently implements the phase-4 slice of the merged
+This repository currently implements the phase-5 slice of the merged
 `alert-triage-li` + `binary hamming maxsim` design:
 
 - Python encoder and retriever contracts
@@ -19,9 +19,11 @@ This repository currently implements the phase-4 slice of the merged
 - deterministic phase-4 tier-2 reasoning harness over `binary-then-fp16-rerank`
 - deterministic phase-4 tier-3 disposition scoring harness
 - audit and terminality trace artifacts for the local triage lane
+- phase-5 provider-ready triage, judge, and terminal-tool runtime seams
+- phase-5 replay-backed tier-2 runtime exercising external-runtime-shaped payload flow
 - phase-2 paired fp16-vs-binary performance harness
 - Rust kernel, DataFusion UDF, and PyO3 shim crates
-- phase-1 through phase-4 unit, contract, and integration tests for the exercised slice
+- phase-1 through phase-5 unit, contract, and integration tests for the exercised slice
 
 What is intentionally not here yet:
 
@@ -29,8 +31,8 @@ What is intentionally not here yet:
 - the upstream Lance package / storage engine; the current `lance-mv` surface is an
   executable Arrow-backed adapter boundary, not a production Lance dependency
 - live provider-backed LLM execution or production MCP wiring; the current
-  phase-4 slice is a deterministic local harness that preserves the report and
-  audit boundaries without claiming external service integration
+  phase-5 slice adds a provider-ready runtime seam plus a replay-backed lane,
+  but it does not claim live network or production connector execution
 - benchmark sweep infrastructure beyond the minimum real phase-2 workload
 
 ## Local verification
@@ -63,6 +65,16 @@ python3 -m venv .venv
   --rerank-depth 2 \
   --out-json data/runs/reports/tier2.json \
   --out-trace data/runs/traces/tier2_trace.jsonl
+.venv/bin/python -m alert_triage.evals.tier2_phase4 \
+  --fixture-dir tests/fixtures/phase1_tier1 \
+  --threads 1 \
+  --rerank-depth 2 \
+  --runtime replay \
+  --runtime-fixture tests/fixtures/phase1_tier1/replay_runtime.json \
+  --llm-model replay:fixture-triager-v1 \
+  --judge-model replay:fixture-judge-v1 \
+  --out-json data/runs/reports/tier2_replay.json \
+  --out-trace data/runs/traces/tier2_replay_trace.jsonl
 .venv/bin/python -m alert_triage.evals.tier3_phase4 \
   --fixture-dir tests/fixtures/phase1_tier1 \
   --tier2-json data/runs/reports/tier2.json \
@@ -71,7 +83,7 @@ cargo test --workspace --manifest-path rust/Cargo.toml
 cargo bench -p hamming_maxsim_kernel --manifest-path rust/Cargo.toml --bench kernel_bench
 ```
 
-## Phase-4 status
+## Phase-5 status
 
 - The executable retrieval claim now includes `bm25`, `lance-mv`,
   `hamming-udf-bin`, `binary-then-fp16-rerank`, and
@@ -82,15 +94,20 @@ cargo bench -p hamming_maxsim_kernel --manifest-path rust/Cargo.toml --bench ker
 - Raw SQL filter strings are still rejected at the shared `QueryBundle`
   boundary, and phase-2 lowers the typed filter shell into the binary retrieval
   path for the allowlisted operators exercised by the tests.
-- The repo now ships a deterministic local tier-2/tier-3 harness over the
-  checked-in fixture pack. It emits reasoning metrics, disposition metrics, and
-  audit/terminality traces without claiming live provider-backed LLM execution.
+- The repo now ships runtime-selected tier-2 reasoning over the checked-in
+  fixture pack. The default `local` runtime preserves the deterministic Phase-4
+  behavior, and the `replay` runtime exercises provider-shaped payload flow
+  while preserving the same report, audit, and terminality contract.
+- The repo still does not claim live provider-backed LLM execution or
+  production MCP wiring in this slice.
 
 See `/Users/jbz/src/secops-triage-li-maxsim/docs/phase1.md` for the phase-1
 fixture details, `/Users/jbz/src/secops-triage-li-maxsim/docs/phase3.md` for the
 Phase-3 retrieval-surface notes, `/Users/jbz/src/secops-triage-li-maxsim/docs/phase4.md`
-for the phase-4 triage harness notes, `data/runs/reports/tier1_phase2_perf.json`
+for the phase-4 triage harness notes, `/Users/jbz/src/secops-triage-li-maxsim/docs/phase5.md`
+for the phase-5 runtime seam notes, `data/runs/reports/tier1_phase2_perf.json`
 for the minimum phase-2 paired performance artifact,
 `data/runs/reports/tier1_phase3.json` for the phase-3 comparison artifact,
-`data/runs/reports/tier2.json` for the phase-4 reasoning artifact, and
+`data/runs/reports/tier2.json` for the phase-4 local reasoning artifact,
+`data/runs/reports/tier2_replay.json` for the phase-5 replay reasoning artifact, and
 `data/runs/reports/tier3.json` for the phase-4 disposition artifact.

@@ -50,6 +50,7 @@ can be verified in-repo before any provider-specific wiring is attempted.
 
 ## Remaining later work
 
+- provider-ready runtime adapter seam for tier-2 execution, landed in Phase-5
 - live provider-backed model adapters if approved
 - richer analyst-label datasets beyond the checked-in fixture pack
 - broader benchmark sweeps and production workflow integration

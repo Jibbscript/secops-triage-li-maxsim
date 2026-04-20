@@ -16,9 +16,15 @@ from alert_triage.retrievers.hamming_udf import HammingUDFRetriever
 from alert_triage.storage.in_memory import InMemoryTokenVectorStore
 from alert_triage.triage import (
     EvidenceHit,
+    InvestigationStepToolRuntime,
+    JudgeRuntime,
+    ReplayJudge,
+    ReplayTriageEngine,
     RuleBasedJudge,
     RuleBasedTriageEngine,
+    TriageRuntime,
     load_reasoning_targets,
+    load_replay_runtime_fixture,
     summarize_audit,
     write_trace_jsonl,
 )
@@ -32,6 +38,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--out-trace", type=Path, required=True)
     parser.add_argument("--threads", type=int, default=1)
     parser.add_argument("--rerank-depth", type=int, default=2)
+    parser.add_argument("--runtime", choices=("local", "replay"), default="local")
+    parser.add_argument("--runtime-fixture", type=Path)
     parser.add_argument("--llm-model", default=RuleBasedTriageEngine.default_model_id)
     parser.add_argument("--judge-model", default=RuleBasedJudge.default_model_id)
     return parser.parse_args()
@@ -65,6 +73,31 @@ def _build_binary_rerank_retriever(
     return retriever, calibrator
 
 
+def _build_reasoning_runtimes(
+    *,
+    runtime: str,
+    llm_model: str,
+    judge_model: str,
+    runtime_fixture: Path | None,
+) -> tuple[TriageRuntime, JudgeRuntime, InvestigationStepToolRuntime]:
+    if runtime == "local":
+        return (
+            RuleBasedTriageEngine(model_id=llm_model),
+            RuleBasedJudge(model_id=judge_model),
+            InvestigationStepToolRuntime(),
+        )
+    if runtime == "replay":
+        if runtime_fixture is None:
+            raise ValueError("runtime_fixture is required when runtime='replay'")
+        fixture = load_replay_runtime_fixture(runtime_fixture)
+        return (
+            ReplayTriageEngine(fixture=fixture, model_id=llm_model),
+            ReplayJudge(fixture=fixture, model_id=judge_model),
+            InvestigationStepToolRuntime(),
+        )
+    raise ValueError(f"unsupported runtime: {runtime}")
+
+
 def run_phase4_reasoning(
     fixture_dir: Path,
     out_json: Path,
@@ -72,6 +105,8 @@ def run_phase4_reasoning(
     *,
     threads: int,
     rerank_depth: int,
+    runtime: str = "local",
+    runtime_fixture: Path | None = None,
     llm_model: str,
     judge_model: str,
 ) -> dict[str, object]:
@@ -90,8 +125,12 @@ def run_phase4_reasoning(
         rerank_depth=rerank_depth,
         threads=threads,
     )
-    triager = RuleBasedTriageEngine(model_id=llm_model)
-    judge = RuleBasedJudge(model_id=judge_model)
+    triager, judge, terminal_tool = _build_reasoning_runtimes(
+        runtime=runtime,
+        llm_model=llm_model,
+        judge_model=judge_model,
+        runtime_fixture=runtime_fixture,
+    )
     samples = []
 
     for query_id, query_fp16 in zip(query_ids, queries, strict=True):
@@ -118,6 +157,7 @@ def run_phase4_reasoning(
                 target=targets[query_id],
                 triager=triager,
                 judge=judge,
+                terminal_tool=terminal_tool,
             )
         )
 
@@ -141,6 +181,7 @@ def run_phase4_reasoning(
     report = {
         "experiment_id": "tier2-phase4",
         "retriever": "binary-then-fp16-rerank",
+        "runtime": runtime,
         "sample_count": len(samples),
         "query_count": len(samples),
         "llm_model": triager.model_id,
@@ -172,6 +213,8 @@ def main() -> None:
         args.out_trace,
         threads=args.threads,
         rerank_depth=args.rerank_depth,
+        runtime=args.runtime,
+        runtime_fixture=args.runtime_fixture,
         llm_model=args.llm_model,
         judge_model=args.judge_model,
     )

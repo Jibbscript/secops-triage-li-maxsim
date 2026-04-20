@@ -18,6 +18,7 @@ def test_phase4_disposition_harness_scores_predictions(tmp_path: Path) -> None:
         tier2_trace,
         threads=1,
         rerank_depth=2,
+        runtime="local",
         llm_model="local:deterministic-triager-v1",
         judge_model="local:deterministic-judge-v1",
     )
