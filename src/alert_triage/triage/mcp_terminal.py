@@ -13,7 +13,20 @@ from .reasoning import TriageDecision
 
 
 _JSONRPC_VERSION = "2.0"
-_MCP_PROTOCOL_VERSION = "2024-11-05"
+_MCP_PROTOCOL_VERSION = "2025-06-18"
+
+
+class MCPError(ValueError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str,
+        details: dict[str, object] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.details = {} if details is None else dict(details)
 
 
 class StdioMCPClient:
@@ -25,7 +38,7 @@ class StdioMCPClient:
         call_timeout_seconds: float = 10.0,
     ) -> None:
         if not command:
-            raise ValueError("mcp server command is required")
+            raise MCPError("mcp server command is required", code="mcp_configuration_invalid")
         self._command = tuple(command)
         self._startup_timeout_seconds = startup_timeout_seconds
         self._call_timeout_seconds = call_timeout_seconds
@@ -53,14 +66,25 @@ class StdioMCPClient:
     def list_tools(self) -> tuple[dict[str, object], ...]:
         if self._tools_cache is not None:
             return self._tools_cache
-        result = self._request("tools/list", {}, timeout_seconds=self._call_timeout_seconds)
+        result = self._request(
+            "tools/list",
+            {},
+            timeout_seconds=self._call_timeout_seconds,
+            error_code="mcp_tool_discovery_failed",
+        )
         tools = result.get("tools")
         if not isinstance(tools, list):
-            raise ValueError("mcp tools/list result must contain a tools list")
+            raise MCPError(
+                "mcp tools/list result must contain a tools list",
+                code="mcp_tool_discovery_failed",
+            )
         normalized = []
         for tool in tools:
             if not isinstance(tool, dict) or not isinstance(tool.get("name"), str):
-                raise ValueError("mcp tools/list returned an invalid tool entry")
+                raise MCPError(
+                    "mcp tools/list returned an invalid tool entry",
+                    code="mcp_tool_discovery_failed",
+                )
             normalized.append(tool)
         self._tools_cache = tuple(normalized)
         return self._tools_cache
@@ -73,14 +97,21 @@ class StdioMCPClient:
                 "arguments": arguments,
             },
             timeout_seconds=self._call_timeout_seconds,
+            error_code="mcp_tool_result_invalid",
         )
         if not isinstance(result, dict):
-            raise ValueError("mcp tools/call result must be an object")
+            raise MCPError("mcp tools/call result must be an object", code="mcp_tool_result_invalid")
         if result.get("isError") is True:
-            raise ValueError(f"mcp tool {tool_name} returned an error result")
+            raise MCPError(
+                f"mcp tool {tool_name} returned an error result",
+                code="mcp_tool_result_invalid",
+            )
         content = result.get("content")
         if content is not None and not isinstance(content, list):
-            raise ValueError("mcp tools/call result content must be a list")
+            raise MCPError(
+                "mcp tools/call result content must be a list",
+                code="mcp_tool_result_invalid",
+            )
         return result
 
     def _ensure_started(self) -> None:
@@ -94,7 +125,10 @@ class StdioMCPClient:
                 stderr=subprocess.PIPE,
             )
         except OSError as exc:
-            raise ValueError(f"failed to launch mcp server {self._command[0]}: {exc.strerror}") from exc
+            raise MCPError(
+                f"failed to launch mcp server {self._command[0]}: {exc.strerror}",
+                code="mcp_startup_failed",
+            ) from exc
 
         result = self._request(
             "initialize",
@@ -107,22 +141,31 @@ class StdioMCPClient:
                 },
             },
             timeout_seconds=self._startup_timeout_seconds,
+            error_code="mcp_startup_failed",
         )
         protocol_version = result.get("protocolVersion")
         if not isinstance(protocol_version, str):
-            raise ValueError("mcp initialize result missing protocolVersion")
-        self._notify("notifications/initialized", {})
+            raise MCPError("mcp initialize result missing protocolVersion", code="mcp_startup_failed")
+        self._notify("notifications/initialized", {}, error_code="mcp_startup_failed")
 
-    def _notify(self, method: str, params: dict[str, object]) -> None:
+    def _notify(self, method: str, params: dict[str, object], *, error_code: str) -> None:
         self._write_message(
             {
                 "jsonrpc": _JSONRPC_VERSION,
                 "method": method,
                 "params": params,
-            }
+            },
+            error_code=error_code,
         )
 
-    def _request(self, method: str, params: dict[str, object], *, timeout_seconds: float) -> dict[str, Any]:
+    def _request(
+        self,
+        method: str,
+        params: dict[str, object],
+        *,
+        timeout_seconds: float,
+        error_code: str,
+    ) -> dict[str, Any]:
         self._ensure_started()
         request_id = self._next_id
         self._next_id += 1
@@ -132,60 +175,47 @@ class StdioMCPClient:
                 "id": request_id,
                 "method": method,
                 "params": params,
-            }
+            },
+            error_code=error_code,
         )
-        response = self._read_message(timeout_seconds=timeout_seconds)
+        response = self._read_message(timeout_seconds=timeout_seconds, error_code=error_code)
         if response.get("id") != request_id:
-            raise ValueError(f"mcp response id mismatch for {method}")
+            raise MCPError(f"mcp response id mismatch for {method}", code=error_code)
         error_payload = response.get("error")
         if error_payload is not None:
-            raise ValueError(f"mcp {method} failed: {error_payload}")
+            raise MCPError(f"mcp {method} failed: {error_payload}", code=error_code)
         result = response.get("result")
         if not isinstance(result, dict):
-            raise ValueError(f"mcp {method} result must be an object")
+            raise MCPError(f"mcp {method} result must be an object", code=error_code)
         return result
 
-    def _write_message(self, payload: dict[str, object]) -> None:
-        process = self._require_process()
+    def _write_message(self, payload: dict[str, object], *, error_code: str) -> None:
+        process = self._require_process(error_code=error_code)
         stdin = process.stdin
         if stdin is None:
-            raise ValueError("mcp server stdin is unavailable")
-        body = json.dumps(payload).encode("utf-8")
-        message = f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body
+            raise MCPError("mcp server stdin is unavailable", code=error_code)
+        message = json.dumps(payload, separators=(",", ":")).encode("utf-8") + b"\n"
         try:
             stdin.write(message)
             stdin.flush()
         except BrokenPipeError as exc:
-            raise ValueError(self._format_error("mcp server closed stdin unexpectedly")) from exc
+            raise MCPError(
+                self._format_error("mcp server closed stdin unexpectedly"),
+                code=error_code,
+            ) from exc
 
-    def _read_message(self, *, timeout_seconds: float) -> dict[str, Any]:
+    def _read_message(self, *, timeout_seconds: float, error_code: str) -> dict[str, Any]:
         deadline = time.monotonic() + timeout_seconds
-        header_bytes = self._read_until(b"\r\n\r\n", deadline=deadline)
-        header_blob = header_bytes[: -len(b"\r\n\r\n")]
-
-        headers = {}
-        for line in header_blob.decode("ascii").split("\r\n"):
-            if not line:
-                continue
-            if ":" not in line:
-                raise ValueError("mcp response header is malformed")
-            key, value = line.split(":", 1)
-            headers[key.strip().lower()] = value.strip()
-        try:
-            content_length = int(headers["content-length"])
-        except (KeyError, ValueError) as exc:
-            raise ValueError("mcp response missing valid Content-Length") from exc
-
-        body = self._read_exact(content_length, deadline=deadline)
+        body = self._read_until(b"\n", deadline=deadline, error_code=error_code).rstrip(b"\n")
         try:
             payload = json.loads(body.decode("utf-8"))
         except json.JSONDecodeError as exc:
-            raise ValueError("mcp response body is not valid JSON") from exc
+            raise MCPError("mcp response body is not valid JSON", code=error_code) from exc
         if not isinstance(payload, dict):
-            raise ValueError("mcp response body must be a JSON object")
+            raise MCPError("mcp response body must be a JSON object", code=error_code)
         return payload
 
-    def _read_until(self, marker: bytes, *, deadline: float) -> bytes:
+    def _read_until(self, marker: bytes, *, deadline: float, error_code: str) -> bytes:
         while True:
             index = self._buffer.find(marker)
             if index >= 0:
@@ -193,24 +223,17 @@ class StdioMCPClient:
                 chunk = bytes(self._buffer[:end])
                 del self._buffer[:end]
                 return chunk
-            self._pump_stdout(deadline=deadline)
+            self._pump_stdout(deadline=deadline, error_code=error_code)
 
-    def _read_exact(self, length: int, *, deadline: float) -> bytes:
-        while len(self._buffer) < length:
-            self._pump_stdout(deadline=deadline)
-        chunk = bytes(self._buffer[:length])
-        del self._buffer[:length]
-        return chunk
-
-    def _pump_stdout(self, *, deadline: float) -> None:
-        process = self._require_process()
+    def _pump_stdout(self, *, deadline: float, error_code: str) -> None:
+        process = self._require_process(error_code=error_code)
         stdout = process.stdout
         if stdout is None:
-            raise ValueError("mcp server stdout is unavailable")
+            raise MCPError("mcp server stdout is unavailable", code=error_code)
 
         timeout = deadline - time.monotonic()
         if timeout <= 0:
-            raise ValueError("timed out waiting for mcp server response")
+            raise MCPError("timed out waiting for mcp server response", code=error_code)
 
         fd = stdout.fileno()
         selector = selectors.DefaultSelector()
@@ -220,17 +243,23 @@ class StdioMCPClient:
         finally:
             selector.close()
         if not events:
-            raise ValueError(self._format_error("timed out waiting for mcp server response"))
+            raise MCPError(
+                self._format_error("timed out waiting for mcp server response"),
+                code=error_code,
+            )
 
         chunk = os.read(fd, 4096)
         if not chunk:
-            raise ValueError(self._format_error("mcp server closed stdout unexpectedly"))
+            raise MCPError(
+                self._format_error("mcp server closed stdout unexpectedly"),
+                code=error_code,
+            )
         self._buffer.extend(chunk)
 
-    def _require_process(self) -> subprocess.Popen[bytes]:
+    def _require_process(self, *, error_code: str) -> subprocess.Popen[bytes]:
         process = self._process
         if process is None:
-            raise ValueError("mcp server process is not running")
+            raise MCPError("mcp server process is not running", code=error_code)
         return process
 
     def _graceful_shutdown(self) -> None:
@@ -238,12 +267,12 @@ class StdioMCPClient:
         if process is None or process.poll() is not None:
             return
         try:
-            self._request("shutdown", {}, timeout_seconds=1.0)
-        except ValueError:
+            self._request("shutdown", {}, timeout_seconds=1.0, error_code="mcp_startup_failed")
+        except MCPError:
             pass
         try:
-            self._notify("exit", {})
-        except ValueError:
+            self._notify("exit", {}, error_code="mcp_startup_failed")
+        except MCPError:
             pass
 
     def _format_error(self, message: str) -> str:
@@ -301,7 +330,10 @@ class MCPTerminalToolRuntime:
         if not self._verified_tool:
             available_tools = {tool["name"] for tool in self._client.list_tools()}
             if self.tool_name not in available_tools:
-                raise ValueError(f"mcp server does not expose tool {self.tool_name}")
+                raise MCPError(
+                    f"mcp server does not expose tool {self.tool_name}",
+                    code="mcp_tool_not_found",
+                )
             self._verified_tool = True
 
         arguments = {

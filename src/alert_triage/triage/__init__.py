@@ -1,6 +1,6 @@
 from .audit import AuditRecord, TraceSummary, summarize_audit, write_trace_jsonl
 from .disposition import compute_disposition_metrics, load_analyst_labels
-from .mcp_terminal import MCPTerminalToolRuntime, StdioMCPClient
+from .mcp_terminal import MCPError, MCPTerminalToolRuntime, StdioMCPClient
 from .provider_runtime import (
     AnthropicJudge,
     AnthropicTriageEngine,
@@ -37,6 +37,7 @@ __all__ = [
     "InvestigationStepToolRuntime",
     "JSONTransport",
     "JudgeRuntime",
+    "MCPError",
     "MCPTerminalToolRuntime",
     "OpenAIResponsesJudge",
     "OpenAIResponsesTriageEngine",

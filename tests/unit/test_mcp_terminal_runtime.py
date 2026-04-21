@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from alert_triage.triage import MCPTerminalToolRuntime, StdioMCPClient, TriageDecision
+from alert_triage.triage import MCPError, MCPTerminalToolRuntime, StdioMCPClient, TriageDecision
 
 
 def _server_command(mode: str = "ok") -> tuple[str, ...]:
@@ -47,15 +47,22 @@ def test_stdio_mcp_client_initializes_lists_tools_and_calls_tool() -> None:
         client.close()
 
 
+def test_stdio_mcp_client_rejects_empty_command_with_configuration_code() -> None:
+    with pytest.raises(MCPError, match="mcp server command is required") as excinfo:
+        StdioMCPClient(command=())
+    assert excinfo.value.code == "mcp_configuration_invalid"
+
+
 def test_mcp_terminal_runtime_raises_when_tool_is_missing() -> None:
     runtime = MCPTerminalToolRuntime(server_command=_server_command("missing-tool"))
     try:
-        with pytest.raises(ValueError, match="does not expose tool"):
+        with pytest.raises(MCPError, match="does not expose tool") as excinfo:
             runtime.emit(
                 query_id="query-1",
                 query_text="Investigate suspicious credential reset activity.",
                 decision=_decision(),
             )
+        assert excinfo.value.code == "mcp_tool_not_found"
     finally:
         runtime.close()
 
@@ -63,12 +70,13 @@ def test_mcp_terminal_runtime_raises_when_tool_is_missing() -> None:
 def test_mcp_terminal_runtime_raises_on_malformed_tool_result() -> None:
     runtime = MCPTerminalToolRuntime(server_command=_server_command("malformed-result"))
     try:
-        with pytest.raises(ValueError, match="content must be a list"):
+        with pytest.raises(MCPError, match="content must be a list") as excinfo:
             runtime.emit(
                 query_id="query-1",
                 query_text="Investigate suspicious credential reset activity.",
                 decision=_decision(),
             )
+        assert excinfo.value.code == "mcp_tool_result_invalid"
     finally:
         runtime.close()
 
@@ -76,11 +84,34 @@ def test_mcp_terminal_runtime_raises_on_malformed_tool_result() -> None:
 def test_mcp_terminal_runtime_raises_on_error_tool_result() -> None:
     runtime = MCPTerminalToolRuntime(server_command=_server_command("tool-error"))
     try:
-        with pytest.raises(ValueError, match="returned an error result"):
+        with pytest.raises(MCPError, match="returned an error result") as excinfo:
             runtime.emit(
                 query_id="query-1",
                 query_text="Investigate suspicious credential reset activity.",
                 decision=_decision(),
             )
+        assert excinfo.value.code == "mcp_tool_result_invalid"
     finally:
         runtime.close()
+
+
+def test_stdio_mcp_client_raises_startup_code_on_invalid_initialize_response() -> None:
+    fixture = Path("tests/fixtures/mcp/fake_reference_server.py")
+    client = StdioMCPClient(command=(sys.executable, str(fixture), "invalid-protocol"))
+    try:
+        with pytest.raises(MCPError, match="missing protocolVersion") as excinfo:
+            client.list_tools()
+        assert excinfo.value.code == "mcp_startup_failed"
+    finally:
+        client.close()
+
+
+def test_stdio_mcp_client_raises_tool_discovery_code_on_invalid_tool_entry() -> None:
+    fixture = Path("tests/fixtures/mcp/fake_reference_server.py")
+    client = StdioMCPClient(command=(sys.executable, str(fixture), "invalid-tool-entry"))
+    try:
+        with pytest.raises(MCPError, match="invalid tool entry") as excinfo:
+            client.list_tools()
+        assert excinfo.value.code == "mcp_tool_discovery_failed"
+    finally:
+        client.close()
