@@ -1,6 +1,6 @@
-# alert-triage-li phase-6 live provider adapter slice
+# alert-triage-li phase-7 MCP terminal tool slice
 
-This repository currently implements the phase-6 slice of the merged
+This repository currently implements the phase-7 slice of the merged
 `alert-triage-li` + `binary hamming maxsim` design:
 
 - Python encoder and retriever contracts
@@ -22,17 +22,20 @@ This repository currently implements the phase-6 slice of the merged
 - phase-5 provider-ready triage, judge, and terminal-tool runtime seams
 - phase-5 replay-backed tier-2 runtime exercising external-runtime-shaped payload flow
 - phase-6 live OpenAI Responses and Anthropic Messages tier-2 runtime adapters
+- phase-7 stdio MCP-backed terminal-tool runtime behind the existing reasoning seam
 - phase-2 paired fp16-vs-binary performance harness
 - Rust kernel, DataFusion UDF, and PyO3 shim crates
-- phase-1 through phase-6 unit, contract, and integration tests for the exercised slice
+- phase-1 through phase-7 unit, contract, and integration tests for the exercised slice,
+  with Phase-7 coverage focused on unit-level seam and harness regression tests
 
 What is intentionally not here yet:
 
 - ingestion connectors
 - the upstream Lance package / storage engine; the current `lance-mv` surface is an
   executable Arrow-backed adapter boundary, not a production Lance dependency
-- production MCP wiring; Phase-6 adds live provider-backed tier-2 runtime
-  adapters, but it still does not claim production connector execution
+- full production workflow integration; Phase-7 adds MCP-backed terminal-tool
+  execution, but it still does not claim arbitrary MCP orchestration or full
+  connector rollout
 - provider SDK integration, retry/backoff orchestration, or CI-backed live
   credential verification
 - benchmark sweep infrastructure beyond the minimum real phase-2 workload
@@ -95,6 +98,15 @@ python3 -m venv .venv
   --judge-model anthropic:claude-sonnet-4-5 \
   --out-json data/runs/reports/tier2_anthropic.json \
   --out-trace data/runs/traces/tier2_anthropic_trace.jsonl
+.venv/bin/python -m alert_triage.evals.tier2_phase4 \
+  --fixture-dir tests/fixtures/phase1_tier1 \
+  --threads 1 \
+  --rerank-depth 2 \
+  --terminal-runtime mcp \
+  --mcp-server-command python3 \
+  --mcp-server-arg tests/fixtures/mcp/fake_terminal_server.py \
+  --out-json data/runs/reports/tier2_mcp_terminal.json \
+  --out-trace data/runs/traces/tier2_mcp_terminal_trace.jsonl
 .venv/bin/python -m alert_triage.evals.tier3_phase4 \
   --fixture-dir tests/fixtures/phase1_tier1 \
   --tier2-json data/runs/reports/tier2.json \
@@ -103,7 +115,7 @@ cargo test --workspace --manifest-path rust/Cargo.toml
 cargo bench -p hamming_maxsim_kernel --manifest-path rust/Cargo.toml --bench kernel_bench
 ```
 
-## Phase-6 status
+## Phase-7 status
 
 - The executable retrieval claim now includes `bm25`, `lance-mv`,
   `hamming-udf-bin`, `binary-then-fp16-rerank`, and
@@ -120,17 +132,19 @@ cargo bench -p hamming_maxsim_kernel --manifest-path rust/Cargo.toml --bench ker
   the `openai` / `anthropic` runtimes execute live provider-backed triage and
   judge calls while preserving the same report, audit, and terminality
   contract.
-- The final terminal tool remains local and bounded to
-  `propose_investigation_step`.
-- The repo still does not claim production MCP wiring or CI-backed live
-  credential verification in this slice.
+- The final terminal tool can now remain local or execute through a configured
+  stdio MCP server while preserving the same three-record audit sequence and
+  terminality contract.
+- The repo still does not claim arbitrary MCP orchestration, provider retry /
+  backoff, or CI-backed live credential verification in this slice.
 
 See `/Users/jbz/src/secops-triage-li-maxsim/docs/phase1.md` for the phase-1
 fixture details, `/Users/jbz/src/secops-triage-li-maxsim/docs/phase3.md` for the
 Phase-3 retrieval-surface notes, `/Users/jbz/src/secops-triage-li-maxsim/docs/phase4.md`
 for the phase-4 triage harness notes, `/Users/jbz/src/secops-triage-li-maxsim/docs/phase5.md`
 for the phase-5 runtime seam notes, `/Users/jbz/src/secops-triage-li-maxsim/docs/phase6.md`
-for the phase-6 live-provider adapter notes, `data/runs/reports/tier1_phase2_perf.json`
+for the phase-6 live-provider adapter notes, and `/Users/jbz/src/secops-triage-li-maxsim/docs/phase7.md`
+for the phase-7 MCP terminal-runtime notes. See `data/runs/reports/tier1_phase2_perf.json`
 for the minimum phase-2 paired performance artifact,
 `data/runs/reports/tier1_phase3.json` for the phase-3 comparison artifact,
 `data/runs/reports/tier2.json` for the phase-4 local reasoning artifact,

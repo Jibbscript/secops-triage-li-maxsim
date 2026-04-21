@@ -318,6 +318,9 @@ class InvestigationStepToolRuntime:
             },
         )
 
+    def close(self) -> None:
+        pass
+
 
 def build_reasoning_sample(
     *,
@@ -349,6 +352,7 @@ def build_reasoning_sample(
         confidence=decision.confidence,
         rationale=decision.rationale,
         cited_evidence_ids=decision.cited_evidence_ids,
+        terminal_tool=terminal_tool.tool_name,
         sample_metrics=sample_metrics,
         audit_records=(triager_audit, judge_audit, tool_audit),
     )

@@ -72,6 +72,6 @@ Optional runtime overrides:
 
 ## Remaining later work
 
-- production MCP connector wiring
+- MCP-backed terminal-tool execution, landed in `/Users/jbz/src/secops-triage-li-maxsim/docs/phase7.md`
 - provider retry/backoff and rate-limit strategy
 - broader benchmark sweeps and production workflow integration

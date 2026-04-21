@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,10 @@ class FakeTransport:
         if not self._responses:
             raise AssertionError("unexpected provider request")
         return self._responses.pop(0)
+
+
+def _mcp_server_command(mode: str = "ok") -> tuple[str, ...]:
+    return (sys.executable, "tests/fixtures/mcp/fake_terminal_server.py", mode)
 
 
 def test_phase4_reasoning_harness_writes_report_and_trace(tmp_path: Path) -> None:
@@ -149,6 +154,17 @@ def test_build_reasoning_runtimes_supports_live_provider_runtimes(
     assert triager.model_id == expected_model
     assert judge.model_id == expected_model
     assert terminal_tool.tool_name == "propose_investigation_step"
+
+
+def test_build_reasoning_runtimes_requires_mcp_command_for_mcp_terminal_runtime() -> None:
+    with pytest.raises(ValueError, match="mcp_server_command is required"):
+        _build_reasoning_runtimes(
+            runtime="local",
+            llm_model="local:deterministic-triager-v1",
+            judge_model="local:deterministic-judge-v1",
+            runtime_fixture=None,
+            terminal_runtime="mcp",
+        )
 
 
 @pytest.mark.parametrize(
@@ -340,3 +356,34 @@ def test_phase4_reasoning_harness_supports_live_provider_runtimes(
     first = json.loads(out_trace.read_text().strip().splitlines()[0])
     assert [record["name"] for record in first["audit_records"]] == expected_names
     assert [record["inputs"].get("role") for record in first["audit_records"][:2]] == ["triager", "judge"]
+
+
+def test_phase4_reasoning_harness_supports_mcp_terminal_runtime(tmp_path: Path) -> None:
+    fixture_dir = Path("tests/fixtures/phase1_tier1")
+    out_json = tmp_path / "tier2-mcp.json"
+    out_trace = tmp_path / "tier2-mcp-trace.jsonl"
+    command = _mcp_server_command()
+
+    report = run_phase4_reasoning(
+        fixture_dir,
+        out_json,
+        out_trace,
+        threads=1,
+        rerank_depth=2,
+        runtime="local",
+        terminal_runtime="mcp",
+        mcp_server_command=command[0],
+        mcp_server_args=command[1:],
+        llm_model="local:deterministic-triager-v1",
+        judge_model="local:deterministic-judge-v1",
+    )
+
+    assert report["runtime"] == "local"
+    assert report["terminal_tool"] == "propose_investigation_step"
+    assert report["orphan_tool_calls"] == 0
+    first = json.loads(out_trace.read_text().strip().splitlines()[0])
+    assert [record["kind"] for record in first["audit_records"]] == ["model_call", "model_call", "tool_call"]
+    assert first["audit_records"][-1]["outputs"]["structuredContent"]["accepted_disposition"] in {
+        "credential_reset",
+        "contain_host",
+    }
