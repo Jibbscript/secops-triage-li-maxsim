@@ -14,6 +14,10 @@ from .reasoning import TriageDecision
 
 _JSONRPC_VERSION = "2.0"
 _MCP_PROTOCOL_VERSION = "2025-06-18"
+_DEFAULT_TERMINAL_TOOL_NAME = "propose_investigation_step"
+_DIRECT_MCP_PROFILE = "direct"
+_EVERYTHING_ECHO_MCP_PROFILE = "everything_echo"
+_EVERYTHING_ECHO_TOOL_NAME = "echo"
 
 
 class MCPError(ValueError):
@@ -27,6 +31,16 @@ class MCPError(ValueError):
         super().__init__(message)
         self.code = code
         self.details = {} if details is None else dict(details)
+
+
+def _normalize_mcp_terminal_profile(profile: str) -> str:
+    normalized = profile.strip().lower()
+    if normalized in {_DIRECT_MCP_PROFILE, _EVERYTHING_ECHO_MCP_PROFILE}:
+        return normalized
+    raise MCPError(
+        f"unsupported mcp terminal tool profile: {profile}",
+        code="mcp_profile_invalid",
+    )
 
 
 class StdioMCPClient:
@@ -305,11 +319,27 @@ class MCPTerminalToolRuntime:
         self,
         *,
         server_command: Sequence[str],
-        tool_name: str = "propose_investigation_step",
+        tool_name: str = _DEFAULT_TERMINAL_TOOL_NAME,
+        mcp_profile: str = _DIRECT_MCP_PROFILE,
         startup_timeout_seconds: float = 5.0,
         call_timeout_seconds: float = 10.0,
     ) -> None:
-        self.tool_name = tool_name
+        self.mcp_profile = _normalize_mcp_terminal_profile(mcp_profile)
+        if self.mcp_profile == _EVERYTHING_ECHO_MCP_PROFILE and tool_name != _DEFAULT_TERMINAL_TOOL_NAME:
+            raise MCPError(
+                "mcp everything_echo profile requires tool_name propose_investigation_step",
+                code="mcp_configuration_invalid",
+            )
+        self.tool_name = (
+            _DEFAULT_TERMINAL_TOOL_NAME
+            if self.mcp_profile == _EVERYTHING_ECHO_MCP_PROFILE
+            else tool_name
+        )
+        self._mcp_tool_name = (
+            self.tool_name
+            if self.mcp_profile == _DIRECT_MCP_PROFILE
+            else _EVERYTHING_ECHO_TOOL_NAME
+        )
         self._client = StdioMCPClient(
             command=server_command,
             startup_timeout_seconds=startup_timeout_seconds,
@@ -327,16 +357,7 @@ class MCPTerminalToolRuntime:
         query_text: str,
         decision: TriageDecision,
     ) -> AuditRecord:
-        if not self._verified_tool:
-            available_tools = {tool["name"] for tool in self._client.list_tools()}
-            if self.tool_name not in available_tools:
-                raise MCPError(
-                    f"mcp server does not expose tool {self.tool_name}",
-                    code="mcp_tool_not_found",
-                )
-            self._verified_tool = True
-
-        arguments = {
+        repo_arguments = {
             "query_id": query_id,
             "query_text": query_text,
             "action": decision.action,
@@ -345,10 +366,101 @@ class MCPTerminalToolRuntime:
             "rationale": decision.rationale,
             "cited_evidence_ids": list(decision.cited_evidence_ids),
         }
-        result = self._client.call_tool(tool_name=self.tool_name, arguments=arguments)
+        if not self._verified_tool:
+            available_tools = {tool["name"] for tool in self._client.list_tools()}
+            if self._mcp_tool_name not in available_tools:
+                raise MCPError(
+                    f"mcp server does not expose tool {self._mcp_tool_name}",
+                    code="mcp_tool_not_found",
+                )
+            self._verified_tool = True
+
+        mcp_arguments = self._build_mcp_arguments(repo_arguments)
+        raw_result = self._client.call_tool(tool_name=self._mcp_tool_name, arguments=mcp_arguments)
         return AuditRecord(
             kind="tool_call",
             name=self.tool_name,
-            inputs=arguments,
-            outputs=result,
+            inputs=repo_arguments,
+            outputs=self._normalize_tool_result(raw_result),
         )
+
+    def _build_mcp_arguments(self, repo_arguments: dict[str, object]) -> dict[str, object]:
+        if self.mcp_profile == _DIRECT_MCP_PROFILE:
+            return repo_arguments
+        return {
+            "message": json.dumps(repo_arguments, sort_keys=True),
+        }
+
+    def _normalize_tool_result(self, raw_result: dict[str, object]) -> dict[str, object]:
+        if self.mcp_profile == _DIRECT_MCP_PROFILE:
+            return raw_result
+
+        echoed_message = self._extract_echoed_message(raw_result)
+        echoed_payload = self._parse_echoed_payload(echoed_message)
+        action = echoed_payload.get("action")
+        disposition = echoed_payload.get("disposition")
+        if not isinstance(action, str) or not isinstance(disposition, str):
+            raise MCPError(
+                "mcp everything_echo profile echoed payload must contain string action and disposition",
+                code="mcp_tool_adapter_result_invalid",
+            )
+        return {
+            "mcp_profile": self.mcp_profile,
+            "mcp_tool_name": self._mcp_tool_name,
+            "raw_mcp_result": raw_result,
+            "content": raw_result.get("content"),
+            "structuredContent": {
+                "accepted_action": action,
+                "accepted_disposition": disposition,
+            },
+        }
+
+    def _extract_echoed_message(self, raw_result: dict[str, object]) -> str:
+        structured = raw_result.get("structuredContent")
+        if isinstance(structured, dict):
+            echoed = structured.get("echoed")
+            if isinstance(echoed, str):
+                return echoed
+
+        content = raw_result.get("content")
+        if isinstance(content, list):
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") != "text":
+                    continue
+                text = item.get("text")
+                if isinstance(text, str):
+                    return text
+
+        raise MCPError(
+            "mcp everything_echo profile requires echoed text output",
+            code="mcp_tool_adapter_result_invalid",
+        )
+
+    def _parse_echoed_payload(self, echoed_message: str) -> dict[str, object]:
+        candidates = [echoed_message]
+        json_object_start = echoed_message.find("{")
+        if json_object_start > 0:
+            candidates.append(echoed_message[json_object_start:])
+
+        payload: object | None = None
+        for candidate in candidates:
+            try:
+                payload = json.loads(candidate)
+                break
+            except json.JSONDecodeError:
+                continue
+
+        if payload is None:
+            raise MCPError(
+                "mcp everything_echo profile echoed payload must be valid JSON",
+                code="mcp_tool_adapter_result_invalid",
+                details={"echoed_message": echoed_message},
+            )
+        if not isinstance(payload, dict):
+            raise MCPError(
+                "mcp everything_echo profile echoed payload must be an object",
+                code="mcp_tool_adapter_result_invalid",
+            )
+        return payload

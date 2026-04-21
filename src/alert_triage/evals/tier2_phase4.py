@@ -53,6 +53,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--mcp-server-command")
     parser.add_argument("--mcp-server-arg", action="append", default=[])
     parser.add_argument("--mcp-tool-name", default="propose_investigation_step")
+    parser.add_argument("--mcp-profile", choices=("direct", "everything_echo"), default="direct")
     parser.add_argument("--mcp-startup-timeout-seconds", type=float, default=5.0)
     parser.add_argument("--mcp-call-timeout-seconds", type=float, default=10.0)
     return parser.parse_args()
@@ -96,6 +97,7 @@ def _build_reasoning_runtimes(
     mcp_server_command: str | None = None,
     mcp_server_args: tuple[str, ...] = (),
     mcp_tool_name: str = "propose_investigation_step",
+    mcp_profile: str = "direct",
     mcp_startup_timeout_seconds: float = 5.0,
     mcp_call_timeout_seconds: float = 10.0,
     api_key: str | None = None,
@@ -109,6 +111,7 @@ def _build_reasoning_runtimes(
         mcp_server_command=mcp_server_command,
         mcp_server_args=mcp_server_args,
         mcp_tool_name=mcp_tool_name,
+        mcp_profile=mcp_profile,
         mcp_startup_timeout_seconds=mcp_startup_timeout_seconds,
         mcp_call_timeout_seconds=mcp_call_timeout_seconds,
     )
@@ -160,6 +163,7 @@ def _build_terminal_tool_runtime(
     mcp_server_command: str | None,
     mcp_server_args: tuple[str, ...],
     mcp_tool_name: str,
+    mcp_profile: str,
     mcp_startup_timeout_seconds: float,
     mcp_call_timeout_seconds: float,
 ) -> TerminalToolRuntime:
@@ -171,6 +175,7 @@ def _build_terminal_tool_runtime(
         return MCPTerminalToolRuntime(
             server_command=(mcp_server_command, *mcp_server_args),
             tool_name=mcp_tool_name,
+            mcp_profile=mcp_profile,
             startup_timeout_seconds=mcp_startup_timeout_seconds,
             call_timeout_seconds=mcp_call_timeout_seconds,
         )
@@ -190,6 +195,7 @@ def run_phase4_reasoning(
     mcp_server_command: str | None = None,
     mcp_server_args: tuple[str, ...] = (),
     mcp_tool_name: str = "propose_investigation_step",
+    mcp_profile: str = "direct",
     mcp_startup_timeout_seconds: float = 5.0,
     mcp_call_timeout_seconds: float = 10.0,
     llm_model: str,
@@ -224,6 +230,7 @@ def run_phase4_reasoning(
         mcp_server_command=mcp_server_command,
         mcp_server_args=mcp_server_args,
         mcp_tool_name=mcp_tool_name,
+        mcp_profile=mcp_profile,
         mcp_startup_timeout_seconds=mcp_startup_timeout_seconds,
         mcp_call_timeout_seconds=mcp_call_timeout_seconds,
         api_key=api_key,
@@ -326,6 +333,7 @@ def main() -> None:
         mcp_server_command=args.mcp_server_command,
         mcp_server_args=tuple(args.mcp_server_arg),
         mcp_tool_name=args.mcp_tool_name,
+        mcp_profile=args.mcp_profile,
         mcp_startup_timeout_seconds=args.mcp_startup_timeout_seconds,
         mcp_call_timeout_seconds=args.mcp_call_timeout_seconds,
         llm_model=args.llm_model,

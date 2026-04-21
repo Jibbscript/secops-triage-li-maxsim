@@ -13,6 +13,11 @@ def _server_command(mode: str = "ok") -> tuple[str, ...]:
     return (sys.executable, str(fixture), mode)
 
 
+def _reference_server_command(mode: str = "ok") -> tuple[str, ...]:
+    fixture = Path("tests/fixtures/mcp/fake_reference_server.py")
+    return (sys.executable, str(fixture), mode)
+
+
 def _decision() -> TriageDecision:
     return TriageDecision(
         query_id="query-1",
@@ -91,6 +96,117 @@ def test_mcp_terminal_runtime_raises_on_error_tool_result() -> None:
                 decision=_decision(),
             )
         assert excinfo.value.code == "mcp_tool_result_invalid"
+    finally:
+        runtime.close()
+
+
+def test_mcp_terminal_runtime_supports_everything_echo_profile() -> None:
+    runtime = MCPTerminalToolRuntime(
+        server_command=_reference_server_command(),
+        mcp_profile="everything_echo",
+    )
+    try:
+        audit = runtime.emit(
+            query_id="query-1",
+            query_text="Investigate suspicious credential reset activity.",
+            decision=_decision(),
+        )
+    finally:
+        runtime.close()
+
+    assert audit.name == "propose_investigation_step"
+    assert audit.outputs["mcp_profile"] == "everything_echo"
+    assert audit.outputs["mcp_tool_name"] == "echo"
+    assert audit.outputs["structuredContent"] == {
+        "accepted_action": "reset_credentials_and_scope_phishing",
+        "accepted_disposition": "credential_reset",
+    }
+    assert audit.outputs["raw_mcp_result"]["structuredContent"]["echoed"]
+
+
+def test_mcp_terminal_runtime_supports_prefixed_everything_echo_payload() -> None:
+    runtime = MCPTerminalToolRuntime(
+        server_command=_reference_server_command("prefixed-echo"),
+        mcp_profile="everything_echo",
+    )
+    try:
+        audit = runtime.emit(
+            query_id="query-1",
+            query_text="Investigate suspicious credential reset activity.",
+            decision=_decision(),
+        )
+    finally:
+        runtime.close()
+
+    assert audit.outputs["structuredContent"] == {
+        "accepted_action": "reset_credentials_and_scope_phishing",
+        "accepted_disposition": "credential_reset",
+    }
+
+
+def test_mcp_terminal_runtime_rejects_invalid_profile() -> None:
+    with pytest.raises(MCPError, match="unsupported mcp terminal tool profile") as excinfo:
+        MCPTerminalToolRuntime(server_command=_server_command(), mcp_profile="unknown")
+    assert excinfo.value.code == "mcp_profile_invalid"
+
+
+def test_mcp_terminal_runtime_rejects_custom_tool_name_for_everything_echo_profile() -> None:
+    with pytest.raises(MCPError, match="requires tool_name propose_investigation_step") as excinfo:
+        MCPTerminalToolRuntime(
+            server_command=_reference_server_command(),
+            mcp_profile="everything_echo",
+            tool_name="custom_step",
+        )
+    assert excinfo.value.code == "mcp_configuration_invalid"
+
+
+def test_mcp_terminal_runtime_raises_when_echo_tool_is_missing() -> None:
+    runtime = MCPTerminalToolRuntime(
+        server_command=_reference_server_command("missing-tool"),
+        mcp_profile="everything_echo",
+    )
+    try:
+        with pytest.raises(MCPError, match="does not expose tool echo") as excinfo:
+            runtime.emit(
+                query_id="query-1",
+                query_text="Investigate suspicious credential reset activity.",
+                decision=_decision(),
+            )
+        assert excinfo.value.code == "mcp_tool_not_found"
+    finally:
+        runtime.close()
+
+
+def test_mcp_terminal_runtime_raises_on_non_json_echo_payload() -> None:
+    runtime = MCPTerminalToolRuntime(
+        server_command=_reference_server_command("bad-echo-payload"),
+        mcp_profile="everything_echo",
+    )
+    try:
+        with pytest.raises(MCPError, match="echoed payload must be valid JSON") as excinfo:
+            runtime.emit(
+                query_id="query-1",
+                query_text="Investigate suspicious credential reset activity.",
+                decision=_decision(),
+            )
+        assert excinfo.value.code == "mcp_tool_adapter_result_invalid"
+    finally:
+        runtime.close()
+
+
+def test_mcp_terminal_runtime_raises_on_invalid_echo_payload_shape() -> None:
+    runtime = MCPTerminalToolRuntime(
+        server_command=_reference_server_command("invalid-echo-shape"),
+        mcp_profile="everything_echo",
+    )
+    try:
+        with pytest.raises(MCPError, match="must contain string action and disposition") as excinfo:
+            runtime.emit(
+                query_id="query-1",
+                query_text="Investigate suspicious credential reset activity.",
+                decision=_decision(),
+            )
+        assert excinfo.value.code == "mcp_tool_adapter_result_invalid"
     finally:
         runtime.close()
 

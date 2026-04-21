@@ -70,6 +70,21 @@ while True:
                 "isError": True,
                 "content": [{"type": "text", "text": "echo failed"}],
             }
+        elif MODE == "bad-echo-payload":
+            result = {
+                "content": [{"type": "text", "text": "not-json"}],
+                "structuredContent": {"echoed": "not-json"},
+            }
+        elif MODE == "invalid-echo-shape":
+            result = {
+                "content": [{"type": "text", "text": "{\"unexpected\":true}"}],
+                "structuredContent": {"echoed": "{\"unexpected\":true}"},
+            }
+        elif MODE == "prefixed-echo":
+            result = {
+                "content": [{"type": "text", "text": f"Echo: {message_text}"}],
+                "structuredContent": {"echoed": f"Echo: {message_text}"},
+            }
         else:
             result = {
                 "content": [{"type": "text", "text": str(message_text)}],

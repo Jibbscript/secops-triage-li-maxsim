@@ -32,6 +32,10 @@ stdio MCP client against one official external reference target:
 RUN_EXTERNAL_MCP_LIVE=1 ./.venv/bin/python -m pytest -m external_mcp_live
 ```
 
+The shared `external_mcp_live` marker now also includes later-phase Everything
+server coverage. The Phase-8-specific live proof in this slice remains the
+standalone reference probe.
+
 ## Important claim boundary
 
 Phase-8 verifies only the live external stdio MCP client path against the
@@ -45,5 +49,5 @@ official Everything reference server. It does not yet claim:
 
 ## Remaining later work
 
-- Phase-9 broader MCP orchestration
 - Phase-10 shared retry/backoff policy
+- Later deliberate widening of MCP orchestration policy, if justified

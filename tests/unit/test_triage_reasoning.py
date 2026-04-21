@@ -22,6 +22,10 @@ def _mcp_server_command(mode: str = "ok") -> tuple[str, ...]:
     return (sys.executable, "tests/fixtures/mcp/fake_terminal_server.py", mode)
 
 
+def _mcp_reference_command(mode: str = "ok") -> tuple[str, ...]:
+    return (sys.executable, "tests/fixtures/mcp/fake_reference_server.py", mode)
+
+
 def test_rule_based_reasoning_emits_terminal_tool_call_and_audit_records() -> None:
     sample = build_reasoning_sample(
         query_id="query-1",
@@ -131,6 +135,46 @@ def test_reasoning_can_emit_terminal_audit_via_mcp_runtime() -> None:
 
     assert sample.terminal_tool == "propose_investigation_step"
     assert sample.audit_records[-1].name == "propose_investigation_step"
+    assert sample.audit_records[-1].outputs["structuredContent"] == {
+        "accepted_action": "reset_credentials_and_scope_phishing",
+        "accepted_disposition": "credential_reset",
+    }
+
+
+def test_reasoning_can_emit_terminal_audit_via_everything_echo_profile() -> None:
+    runtime = MCPTerminalToolRuntime(
+        server_command=_mcp_reference_command(),
+        mcp_profile="everything_echo",
+    )
+    try:
+        sample = build_reasoning_sample(
+            query_id="query-1",
+            query_text="phishing credential reset",
+            evidence=(
+                EvidenceHit(
+                    alert_id="alert-1",
+                    score=1.0,
+                    stage="fp16_maxsim",
+                    text="phishing credential reset playbook",
+                ),
+            ),
+            target=ReasoningTarget(
+                expected_action="reset_credentials_and_scope_phishing",
+                expected_disposition="credential_reset",
+                expected_evidence_ids=("alert-1",),
+                rationale_keyword="phishing",
+            ),
+            triager=RuleBasedTriageEngine(),
+            judge=RuleBasedJudge(),
+            terminal_tool=runtime,
+        )
+    finally:
+        runtime.close()
+
+    assert sample.terminal_tool == "propose_investigation_step"
+    assert sample.audit_records[-1].name == "propose_investigation_step"
+    assert sample.audit_records[-1].outputs["mcp_profile"] == "everything_echo"
+    assert sample.audit_records[-1].outputs["mcp_tool_name"] == "echo"
     assert sample.audit_records[-1].outputs["structuredContent"] == {
         "accepted_action": "reset_credentials_and_scope_phishing",
         "accepted_disposition": "credential_reset",

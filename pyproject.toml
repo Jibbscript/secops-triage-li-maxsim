@@ -31,5 +31,5 @@ pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = "-q"
 markers = [
-  "external_mcp_live: opt-in live MCP probe against the official Everything reference server",
+  "external_mcp_live: opt-in live MCP verification against the official Everything reference server",
 ]
