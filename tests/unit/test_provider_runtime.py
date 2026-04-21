@@ -1,22 +1,28 @@
 from __future__ import annotations
 
 import json
+from io import BytesIO
+from urllib import error
 
 import pytest
 
+import alert_triage.triage.provider_runtime as provider_runtime_module
 from alert_triage.triage import (
     AnthropicJudge,
     AnthropicTriageEngine,
     EvidenceHit,
     OpenAIResponsesJudge,
     OpenAIResponsesTriageEngine,
+    ProviderRequestError,
     ReasoningTarget,
+    RetryPolicy,
     TriageDecision,
+    UrllibJSONTransport,
 )
 
 
 class FakeTransport:
-    def __init__(self, responses: list[dict[str, object]]) -> None:
+    def __init__(self, responses: list[object]) -> None:
         self._responses = list(responses)
         self.calls: list[dict[str, object]] = []
 
@@ -38,7 +44,11 @@ class FakeTransport:
         )
         if not self._responses:
             raise AssertionError("unexpected provider request")
-        return self._responses.pop(0)
+        response = self._responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        assert isinstance(response, dict)
+        return response
 
 
 def _evidence() -> tuple[EvidenceHit, ...]:
@@ -246,6 +256,115 @@ def test_provider_adapters_require_api_key_env(monkeypatch: pytest.MonkeyPatch) 
 def test_provider_adapters_reject_cross_provider_model_ids() -> None:
     with pytest.raises(ValueError, match="anthropic runtime requires anthropic:<model> ids"):
         AnthropicJudge(model_id="openai:gpt-5", api_key="anth-test")
+
+
+def test_urllib_transport_marks_retryable_http_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_urlopen(_req: object, timeout: float) -> object:
+        raise error.HTTPError(
+            url="https://example.test/v1/responses",
+            code=503,
+            msg="busy",
+            hdrs=None,
+            fp=BytesIO(b'{"error":"busy"}'),
+        )
+
+    monkeypatch.setattr(provider_runtime_module.request, "urlopen", fake_urlopen)
+
+    with pytest.raises(ProviderRequestError, match="HTTP 503") as excinfo:
+        UrllibJSONTransport().post_json(
+            url="https://example.test/v1/responses",
+            headers={},
+            payload={"ping": True},
+            timeout_seconds=1.0,
+        )
+
+    assert excinfo.value.retryable is True
+    assert excinfo.value.status_code == 503
+
+
+def test_openai_triage_adapter_retries_retryable_provider_errors() -> None:
+    transport = FakeTransport(
+        [
+            ProviderRequestError(
+                "provider request failed with HTTP 503: busy",
+                code="provider_http_error",
+                retryable=True,
+                status_code=503,
+            ),
+            {
+                "id": "resp_openai_triage",
+                "output": [
+                    {
+                        "type": "function_call",
+                        "name": "emit_triage_decision",
+                        "arguments": json.dumps(_decision().model_dump(mode="json")),
+                    }
+                ],
+            },
+        ]
+    )
+    triager = OpenAIResponsesTriageEngine(
+        model_id="openai:gpt-5",
+        api_key="sk-test",
+        transport=transport,
+        retry_policy=RetryPolicy(max_attempts=2),
+    )
+
+    decision, _audit = triager.decide(
+        query_id="query-1",
+        query_text=_decision().query_text,
+        evidence=_evidence(),
+    )
+
+    assert decision.action == _decision().action
+    assert len(transport.calls) == 2
+
+
+def test_provider_runtime_does_not_retry_non_retryable_provider_errors() -> None:
+    transport = FakeTransport(
+        [
+            ProviderRequestError(
+                "provider request failed with HTTP 400: bad-request",
+                code="provider_http_error",
+                retryable=False,
+                status_code=400,
+            )
+        ]
+    )
+    triager = OpenAIResponsesTriageEngine(
+        model_id="openai:gpt-5",
+        api_key="sk-test",
+        transport=transport,
+        retry_policy=RetryPolicy(max_attempts=3),
+    )
+
+    with pytest.raises(ProviderRequestError, match="HTTP 400"):
+        triager.decide(
+            query_id="query-1",
+            query_text=_decision().query_text,
+            evidence=_evidence(),
+        )
+
+    assert len(transport.calls) == 1
+
+
+def test_provider_runtime_does_not_retry_invalid_response_shapes() -> None:
+    transport = FakeTransport([{"id": "resp_missing", "output": [{"type": "message"}]}])
+    triager = OpenAIResponsesTriageEngine(
+        model_id="openai:gpt-5",
+        api_key="sk-test",
+        transport=transport,
+        retry_policy=RetryPolicy(max_attempts=3),
+    )
+
+    with pytest.raises(ValueError, match="missing function_call"):
+        triager.decide(
+            query_id="query-1",
+            query_text=_decision().query_text,
+            evidence=_evidence(),
+        )
+
+    assert len(transport.calls) == 1
 
 
 def test_openai_adapter_rejects_missing_function_call() -> None:

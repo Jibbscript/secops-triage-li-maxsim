@@ -1,21 +1,32 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
 import pytest
 
-from alert_triage.triage import MCPError, MCPTerminalToolRuntime, StdioMCPClient, TriageDecision
+from alert_triage.triage import MCPError, MCPTerminalToolRuntime, RetryPolicy, StdioMCPClient, TriageDecision
 
 
-def _server_command(mode: str = "ok") -> tuple[str, ...]:
+def _server_command(mode: str = "ok", state_path: Path | None = None) -> tuple[str, ...]:
     fixture = Path("tests/fixtures/mcp/fake_terminal_server.py")
-    return (sys.executable, str(fixture), mode)
+    command: tuple[str, ...] = (sys.executable, str(fixture), mode)
+    if state_path is not None:
+        command += (str(state_path),)
+    return command
 
 
 def _reference_server_command(mode: str = "ok") -> tuple[str, ...]:
     fixture = Path("tests/fixtures/mcp/fake_reference_server.py")
     return (sys.executable, str(fixture), mode)
+
+
+def _read_state(path: Path) -> dict[str, int]:
+    if not path.exists():
+        return {}
+    payload = json.loads(path.read_text())
+    return {key: int(value) for key, value in payload.items()}
 
 
 def _decision() -> TriageDecision:
@@ -58,6 +69,22 @@ def test_stdio_mcp_client_rejects_empty_command_with_configuration_code() -> Non
     assert excinfo.value.code == "mcp_configuration_invalid"
 
 
+def test_stdio_mcp_client_retries_transient_startup_timeout(tmp_path: Path) -> None:
+    state_path = tmp_path / "startup-state.json"
+    client = StdioMCPClient(
+        command=_server_command("initialize-timeout-once", state_path),
+        startup_timeout_seconds=0.05,
+        retry_policy=RetryPolicy(max_attempts=2),
+    )
+    try:
+        tools = client.list_tools()
+    finally:
+        client.close()
+
+    assert tools[0]["name"] == "propose_investigation_step"
+    assert _read_state(state_path)["initialize"] == 2
+
+
 def test_mcp_terminal_runtime_raises_when_tool_is_missing() -> None:
     runtime = MCPTerminalToolRuntime(server_command=_server_command("missing-tool"))
     try:
@@ -98,6 +125,26 @@ def test_mcp_terminal_runtime_raises_on_error_tool_result() -> None:
         assert excinfo.value.code == "mcp_tool_result_invalid"
     finally:
         runtime.close()
+
+
+def test_mcp_terminal_runtime_retries_transient_tool_timeout(tmp_path: Path) -> None:
+    state_path = tmp_path / "call-state.json"
+    runtime = MCPTerminalToolRuntime(
+        server_command=_server_command("call-timeout-once", state_path),
+        call_timeout_seconds=0.05,
+        retry_policy=RetryPolicy(max_attempts=2),
+    )
+    try:
+        audit = runtime.emit(
+            query_id="query-1",
+            query_text="Investigate suspicious credential reset activity.",
+            decision=_decision(),
+        )
+    finally:
+        runtime.close()
+
+    assert audit.outputs["structuredContent"]["accepted_action"] == _decision().action
+    assert _read_state(state_path)["tools_call"] == 2
 
 
 def test_mcp_terminal_runtime_supports_everything_echo_profile() -> None:
@@ -175,6 +222,28 @@ def test_mcp_terminal_runtime_raises_when_echo_tool_is_missing() -> None:
         assert excinfo.value.code == "mcp_tool_not_found"
     finally:
         runtime.close()
+
+
+def test_mcp_terminal_runtime_does_not_retry_missing_tools(tmp_path: Path) -> None:
+    state_path = tmp_path / "missing-tool-state.json"
+    runtime = MCPTerminalToolRuntime(
+        server_command=_server_command("missing-tool", state_path),
+        retry_policy=RetryPolicy(max_attempts=3),
+    )
+    try:
+        with pytest.raises(MCPError, match="does not expose tool") as excinfo:
+            runtime.emit(
+                query_id="query-1",
+                query_text="Investigate suspicious credential reset activity.",
+                decision=_decision(),
+            )
+        assert excinfo.value.code == "mcp_tool_not_found"
+    finally:
+        runtime.close()
+
+    state = _read_state(state_path)
+    assert state["initialize"] == 1
+    assert state["tools_list"] == 1
 
 
 def test_mcp_terminal_runtime_raises_on_non_json_echo_payload() -> None:

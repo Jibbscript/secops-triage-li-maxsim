@@ -1,6 +1,6 @@
-# alert-triage-li phase-9 MCP terminal adapter profile slice
+# alert-triage-li phase-10 shared retry/backoff slice
 
-This repository currently implements the phase-9 slice of the merged
+This repository currently implements the phase-10 slice of the merged
 `alert-triage-li` + `binary hamming maxsim` design:
 
 - Python encoder and retriever contracts
@@ -28,11 +28,14 @@ This repository currently implements the phase-9 slice of the merged
 - phase-9 explicit `everything_echo` MCP terminal adapter profile that bridges
   the official Everything reference server into the repo-owned
   `propose_investigation_step` audit contract
+- phase-10 shared retry/backoff policy for provider HTTP and bounded MCP
+  terminal-tool transport calls, with deterministic defaults and explicit
+  opt-in harness flags
 - phase-2 paired fp16-vs-binary performance harness
 - Rust kernel, DataFusion UDF, and PyO3 shim crates
-- phase-1 through phase-9 unit, contract, and integration tests for the exercised slice,
-  with Phase-9 coverage focused on bounded MCP adapter/profile behavior and
-  opt-in live Everything-server verification
+- phase-1 through phase-10 unit, contract, and integration tests for the exercised slice,
+  with Phase-10 coverage focused on shared retry policy behavior plus bounded
+  MCP adapter/profile behavior and opt-in live Everything-server verification
 
 What is intentionally not here yet:
 
@@ -43,8 +46,8 @@ What is intentionally not here yet:
   MCP orchestration or full connector rollout
 - generic external terminal-tool compatibility beyond the explicit
   `everything_echo` profile
-- provider SDK integration, retry/backoff orchestration, or CI-backed live
-  credential verification by default
+- provider SDK integration, full production resilience policy, or CI-backed
+  live credential verification by default
 - benchmark sweep infrastructure beyond the minimum real phase-2 workload
 
 ## Local verification
@@ -138,7 +141,7 @@ cargo test --workspace --manifest-path rust/Cargo.toml
 cargo bench -p hamming_maxsim_kernel --manifest-path rust/Cargo.toml --bench kernel_bench
 ```
 
-## Phase-9 status
+## Phase-10 status
 
 - The executable retrieval claim now includes `bm25`, `lance-mv`,
   `hamming-udf-bin`, `binary-then-fp16-rerank`, and
@@ -166,9 +169,12 @@ cargo bench -p hamming_maxsim_kernel --manifest-path rust/Cargo.toml --bench ker
 - The repo now also ships an explicit Phase-9 tier-2 path that adapts the
   Everything server `echo` tool back into the repo-owned
   `propose_investigation_step` contract.
+- The repo now also ships a shared Phase-10 retry/backoff policy that both the
+  provider HTTP runtimes and bounded MCP terminal runtime can reuse, while
+  keeping retries disabled by default unless the harness opts in explicitly.
 - The repo still does not claim arbitrary external terminal-tool compatibility,
-  arbitrary multi-tool MCP orchestration, provider retry / backoff, or default
-  CI-backed live verification in this slice.
+  arbitrary multi-tool MCP orchestration, full production retry strategy, or
+  default CI-backed live verification in this slice.
 
 See `/Users/jbz/src/secops-triage-li-maxsim/docs/phase1.md` for the phase-1
 fixture details, `/Users/jbz/src/secops-triage-li-maxsim/docs/phase3.md` for the
@@ -178,7 +184,8 @@ for the phase-5 runtime seam notes, `/Users/jbz/src/secops-triage-li-maxsim/docs
 for the phase-6 live-provider adapter notes, and `/Users/jbz/src/secops-triage-li-maxsim/docs/phase7.md`
 for the phase-7 MCP terminal-runtime notes, and `/Users/jbz/src/secops-triage-li-maxsim/docs/phase8.md`
 for the phase-8 MCP reference-probe notes, and `/Users/jbz/src/secops-triage-li-maxsim/docs/phase9.md`
-for the phase-9 MCP adapter-profile notes. See `data/runs/reports/tier1_phase2_perf.json`
+for the phase-9 MCP adapter-profile notes, and `/Users/jbz/src/secops-triage-li-maxsim/docs/phase10.md`
+for the phase-10 shared retry/backoff notes. See `data/runs/reports/tier1_phase2_perf.json`
 for the minimum phase-2 paired performance artifact,
 `data/runs/reports/tier1_phase3.json` for the phase-3 comparison artifact,
 `data/runs/reports/tier2.json` for the phase-4 local reasoning artifact,

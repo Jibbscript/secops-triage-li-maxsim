@@ -22,6 +22,7 @@ from alert_triage.triage import (
     MCPTerminalToolRuntime,
     ReplayJudge,
     ReplayTriageEngine,
+    RetryPolicy,
     RuleBasedJudge,
     RuleBasedTriageEngine,
     TerminalToolRuntime,
@@ -56,6 +57,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--mcp-profile", choices=("direct", "everything_echo"), default="direct")
     parser.add_argument("--mcp-startup-timeout-seconds", type=float, default=5.0)
     parser.add_argument("--mcp-call-timeout-seconds", type=float, default=10.0)
+    parser.add_argument("--retry-max-attempts", type=int, default=1)
+    parser.add_argument("--retry-initial-backoff-seconds", type=float, default=0.0)
+    parser.add_argument("--retry-max-backoff-seconds", type=float, default=0.0)
+    parser.add_argument("--retry-backoff-multiplier", type=float, default=2.0)
     return parser.parse_args()
 
 
@@ -105,6 +110,7 @@ def _build_reasoning_runtimes(
     api_base_url: str | None = None,
     timeout_seconds: float = 30.0,
     transport: JSONTransport | None = None,
+    retry_policy: RetryPolicy | None = None,
 ) -> tuple[TriageRuntime, JudgeRuntime, TerminalToolRuntime]:
     terminal_tool = _build_terminal_tool_runtime(
         terminal_runtime=terminal_runtime,
@@ -114,6 +120,7 @@ def _build_reasoning_runtimes(
         mcp_profile=mcp_profile,
         mcp_startup_timeout_seconds=mcp_startup_timeout_seconds,
         mcp_call_timeout_seconds=mcp_call_timeout_seconds,
+        retry_policy=retry_policy,
     )
     if runtime == "local":
         return (
@@ -140,6 +147,7 @@ def _build_reasoning_runtimes(
             api_base_url=api_base_url,
             timeout_seconds=timeout_seconds,
             transport=transport,
+            retry_policy=retry_policy,
         )
         return triager, judge, terminal_tool
     if runtime == "anthropic":
@@ -152,6 +160,7 @@ def _build_reasoning_runtimes(
             api_base_url=api_base_url,
             timeout_seconds=timeout_seconds,
             transport=transport,
+            retry_policy=retry_policy,
         )
         return triager, judge, terminal_tool
     raise ValueError(f"unsupported runtime: {runtime}")
@@ -166,6 +175,7 @@ def _build_terminal_tool_runtime(
     mcp_profile: str,
     mcp_startup_timeout_seconds: float,
     mcp_call_timeout_seconds: float,
+    retry_policy: RetryPolicy | None,
 ) -> TerminalToolRuntime:
     if terminal_runtime == "local":
         return InvestigationStepToolRuntime()
@@ -178,6 +188,7 @@ def _build_terminal_tool_runtime(
             mcp_profile=mcp_profile,
             startup_timeout_seconds=mcp_startup_timeout_seconds,
             call_timeout_seconds=mcp_call_timeout_seconds,
+            retry_policy=retry_policy,
         )
     raise ValueError(f"unsupported terminal_runtime: {terminal_runtime}")
 
@@ -205,6 +216,7 @@ def run_phase4_reasoning(
     api_base_url: str | None = None,
     timeout_seconds: float = 30.0,
     transport: JSONTransport | None = None,
+    retry_policy: RetryPolicy | None = None,
 ) -> dict[str, object]:
     if threads < 1:
         raise ValueError("threads must be >= 1")
@@ -233,6 +245,7 @@ def run_phase4_reasoning(
         mcp_profile=mcp_profile,
         mcp_startup_timeout_seconds=mcp_startup_timeout_seconds,
         mcp_call_timeout_seconds=mcp_call_timeout_seconds,
+        retry_policy=retry_policy,
         api_key=api_key,
         api_key_env=api_key_env,
         api_base_url=api_base_url,
@@ -321,6 +334,12 @@ def run_phase4_reasoning(
 
 def main() -> None:
     args = _parse_args()
+    retry_policy = RetryPolicy(
+        max_attempts=args.retry_max_attempts,
+        initial_backoff_seconds=args.retry_initial_backoff_seconds,
+        max_backoff_seconds=args.retry_max_backoff_seconds,
+        backoff_multiplier=args.retry_backoff_multiplier,
+    )
     run_phase4_reasoning(
         args.fixture_dir,
         args.out_json,
@@ -341,6 +360,7 @@ def main() -> None:
         api_key_env=args.api_key_env,
         api_base_url=args.api_base_url,
         timeout_seconds=args.timeout_seconds,
+        retry_policy=retry_policy,
     )
 
 

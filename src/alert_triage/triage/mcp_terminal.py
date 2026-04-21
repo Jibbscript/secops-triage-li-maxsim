@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from .audit import AuditRecord
+from .retry import RetryPolicy, retry_call
 from .reasoning import TriageDecision
 
 
@@ -43,6 +44,26 @@ def _normalize_mcp_terminal_profile(profile: str) -> str:
     )
 
 
+def _is_retryable_mcp_error(exc: Exception) -> bool:
+    if not isinstance(exc, MCPError):
+        return False
+    message = str(exc).lower()
+    return exc.code in {
+        "mcp_startup_failed",
+        "mcp_tool_discovery_failed",
+        "mcp_tool_result_invalid",
+    } and (
+        "timed out" in message
+        or "failed to launch" in message
+        or "stdin is unavailable" in message
+        or "stdout is unavailable" in message
+        or "failed to write request" in message
+        or "response id mismatch" in message
+        or "server exited" in message
+        or "server stdout closed" in message
+    )
+
+
 class StdioMCPClient:
     def __init__(
         self,
@@ -50,12 +71,14 @@ class StdioMCPClient:
         command: Sequence[str],
         startup_timeout_seconds: float = 5.0,
         call_timeout_seconds: float = 10.0,
+        retry_policy: RetryPolicy | None = None,
     ) -> None:
         if not command:
             raise MCPError("mcp server command is required", code="mcp_configuration_invalid")
         self._command = tuple(command)
         self._startup_timeout_seconds = startup_timeout_seconds
         self._call_timeout_seconds = call_timeout_seconds
+        self.retry_policy = retry_policy or RetryPolicy()
         self._process: subprocess.Popen[bytes] | None = None
         self._next_id = 1
         self._buffer = bytearray()
@@ -80,6 +103,23 @@ class StdioMCPClient:
     def list_tools(self) -> tuple[dict[str, object], ...]:
         if self._tools_cache is not None:
             return self._tools_cache
+        self._tools_cache = retry_call(
+            self._list_tools_once,
+            policy=self.retry_policy,
+            is_retryable=_is_retryable_mcp_error,
+            on_retry=self._reset_after_retry,
+        )
+        return self._tools_cache
+
+    def call_tool(self, *, tool_name: str, arguments: dict[str, object]) -> dict[str, object]:
+        return retry_call(
+            lambda: self._call_tool_once(tool_name=tool_name, arguments=arguments),
+            policy=self.retry_policy,
+            is_retryable=_is_retryable_mcp_error,
+            on_retry=self._reset_after_retry,
+        )
+
+    def _list_tools_once(self) -> tuple[dict[str, object], ...]:
         result = self._request(
             "tools/list",
             {},
@@ -100,10 +140,9 @@ class StdioMCPClient:
                     code="mcp_tool_discovery_failed",
                 )
             normalized.append(tool)
-        self._tools_cache = tuple(normalized)
-        return self._tools_cache
+        return tuple(normalized)
 
-    def call_tool(self, *, tool_name: str, arguments: dict[str, object]) -> dict[str, object]:
+    def _call_tool_once(self, *, tool_name: str, arguments: dict[str, object]) -> dict[str, object]:
         result = self._request(
             "tools/call",
             {
@@ -131,6 +170,14 @@ class StdioMCPClient:
     def _ensure_started(self) -> None:
         if self._process is not None:
             return
+        retry_call(
+            self._start_once,
+            policy=self.retry_policy,
+            is_retryable=_is_retryable_mcp_error,
+            on_retry=self._reset_after_retry,
+        )
+
+    def _start_once(self) -> None:
         try:
             self._process = subprocess.Popen(
                 self._command,
@@ -161,6 +208,21 @@ class StdioMCPClient:
         if not isinstance(protocol_version, str):
             raise MCPError("mcp initialize result missing protocolVersion", code="mcp_startup_failed")
         self._notify("notifications/initialized", {}, error_code="mcp_startup_failed")
+
+    def _reset_after_retry(self, _exc: Exception, _next_attempt: int, _delay: float) -> None:
+        process = self._process
+        self._process = None
+        self._tools_cache = None
+        self._buffer.clear()
+        if process is None:
+            return
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=1.0)
 
     def _notify(self, method: str, params: dict[str, object], *, error_code: str) -> None:
         self._write_message(
@@ -323,6 +385,7 @@ class MCPTerminalToolRuntime:
         mcp_profile: str = _DIRECT_MCP_PROFILE,
         startup_timeout_seconds: float = 5.0,
         call_timeout_seconds: float = 10.0,
+        retry_policy: RetryPolicy | None = None,
     ) -> None:
         self.mcp_profile = _normalize_mcp_terminal_profile(mcp_profile)
         if self.mcp_profile == _EVERYTHING_ECHO_MCP_PROFILE and tool_name != _DEFAULT_TERMINAL_TOOL_NAME:
@@ -344,7 +407,9 @@ class MCPTerminalToolRuntime:
             command=server_command,
             startup_timeout_seconds=startup_timeout_seconds,
             call_timeout_seconds=call_timeout_seconds,
+            retry_policy=retry_policy,
         )
+        self.retry_policy = self._client.retry_policy
         self._verified_tool = False
 
     def close(self) -> None:

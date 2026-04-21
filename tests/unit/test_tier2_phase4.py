@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from alert_triage.evals.tier2_phase4 import _build_reasoning_runtimes, run_phase4_reasoning
-from alert_triage.triage import AnthropicJudge, AnthropicTriageEngine, OpenAIResponsesJudge, OpenAIResponsesTriageEngine
+from alert_triage.triage import AnthropicJudge, AnthropicTriageEngine, OpenAIResponsesJudge, OpenAIResponsesTriageEngine, RetryPolicy
 
 
 class FakeTransport:
@@ -171,6 +171,30 @@ def test_build_reasoning_runtimes_requires_mcp_command_for_mcp_terminal_runtime(
         )
 
 
+def test_build_reasoning_runtimes_threads_retry_policy_to_provider_and_mcp_terminal() -> None:
+    retry_policy = RetryPolicy(max_attempts=2, initial_backoff_seconds=0.05)
+    command = _mcp_server_command()
+
+    triager, judge, terminal_tool = _build_reasoning_runtimes(
+        runtime="openai",
+        llm_model="local:deterministic-triager-v1",
+        judge_model="local:deterministic-judge-v1",
+        runtime_fixture=None,
+        terminal_runtime="mcp",
+        mcp_server_command=command[0],
+        mcp_server_args=command[1:],
+        api_key="provider-test-key",
+        transport=FakeTransport([]),
+        retry_policy=retry_policy,
+    )
+    try:
+        assert isinstance(triager, OpenAIResponsesTriageEngine)
+        assert isinstance(judge, OpenAIResponsesJudge)
+        assert triager.retry_policy == retry_policy
+        assert judge.retry_policy == retry_policy
+        assert terminal_tool.retry_policy == retry_policy
+    finally:
+        terminal_tool.close()
 @pytest.mark.parametrize(
     ("runtime", "response_sequence", "expected_names"),
     [

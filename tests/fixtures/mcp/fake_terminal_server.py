@@ -2,10 +2,25 @@ from __future__ import annotations
 
 import json
 import sys
+import time
+from pathlib import Path
 
 
 MODE = sys.argv[1] if len(sys.argv) > 1 else "ok"
+STATE_PATH = Path(sys.argv[2]) if len(sys.argv) > 2 else None
 TOOL_NAME = "propose_investigation_step"
+
+
+def bump_counter(name: str) -> int:
+    if STATE_PATH is None:
+        return 1
+    if STATE_PATH.exists():
+        payload = json.loads(STATE_PATH.read_text())
+    else:
+        payload = {}
+    payload[name] = int(payload.get(name, 0)) + 1
+    STATE_PATH.write_text(json.dumps(payload, sort_keys=True))
+    return int(payload[name])
 
 
 def read_message() -> dict[str, object] | None:
@@ -30,6 +45,10 @@ while True:
     request_id = message.get("id")
 
     if method == "initialize":
+        attempt = bump_counter("initialize")
+        if MODE == "initialize-timeout-once" and attempt == 1:
+            time.sleep(0.2)
+            continue
         write_message(
             {
                 "jsonrpc": "2.0",
@@ -60,6 +79,7 @@ while True:
         continue
 
     if method == "tools/list":
+        bump_counter("tools_list")
         tools = [] if MODE == "missing-tool" else [{"name": TOOL_NAME}]
         write_message(
             {
@@ -73,8 +93,12 @@ while True:
         continue
 
     if method == "tools/call":
+        attempt = bump_counter("tools_call")
         params = message.get("params", {})
         arguments = params.get("arguments", {}) if isinstance(params, dict) else {}
+        if MODE == "call-timeout-once" and attempt == 1:
+            time.sleep(0.2)
+            continue
         if MODE == "malformed-result":
             result = {"content": "not-a-list"}
         elif MODE == "tool-error":

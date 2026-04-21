@@ -7,9 +7,11 @@ from .provider_runtime import (
     JSONTransport,
     OpenAIResponsesJudge,
     OpenAIResponsesTriageEngine,
+    ProviderRequestError,
     UrllibJSONTransport,
     build_provider_runtimes,
 )
+from .retry import RetryPolicy
 from .reasoning import (
     EvidenceHit,
     InvestigationStepToolRuntime,
@@ -41,6 +43,7 @@ __all__ = [
     "MCPTerminalToolRuntime",
     "OpenAIResponsesJudge",
     "OpenAIResponsesTriageEngine",
+    "ProviderRequestError",
     "ReplayJudge",
     "ReplayRuntimeFixture",
     "ReplayRuntimeSample",
@@ -49,6 +52,7 @@ __all__ = [
     "ReasoningTarget",
     "RuleBasedJudge",
     "RuleBasedTriageEngine",
+    "RetryPolicy",
     "StdioMCPClient",
     "TerminalToolRuntime",
     "TraceSummary",

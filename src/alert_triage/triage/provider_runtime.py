@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict
 
 from .audit import AuditRecord
 from .reasoning import EvidenceHit, JudgeRuntime, ReasoningTarget, TriageDecision, TriageRuntime
+from .retry import RetryPolicy, retry_call
 
 
 class ReasoningScorePayload(BaseModel):
@@ -39,6 +40,24 @@ class JSONTransport(Protocol):
     ) -> dict[str, Any]: ...
 
 
+_RETRYABLE_HTTP_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
+
+
+class ProviderRequestError(ValueError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str,
+        retryable: bool,
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.retryable = retryable
+        self.status_code = status_code
+
+
 class UrllibJSONTransport:
     def post_json(
         self,
@@ -55,9 +74,18 @@ class UrllibJSONTransport:
                 return json.loads(response.read().decode("utf-8"))
         except error.HTTPError as exc:
             message = exc.read().decode("utf-8", errors="replace")
-            raise ValueError(f"provider request failed with HTTP {exc.code}: {message}") from exc
+            raise ProviderRequestError(
+                f"provider request failed with HTTP {exc.code}: {message}",
+                code="provider_http_error",
+                retryable=exc.code in _RETRYABLE_HTTP_STATUS_CODES,
+                status_code=exc.code,
+            ) from exc
         except error.URLError as exc:
-            raise ValueError(f"provider request failed: {exc.reason}") from exc
+            raise ProviderRequestError(
+                f"provider request failed: {exc.reason}",
+                code="provider_transport_error",
+                retryable=True,
+            ) from exc
 
 
 def _tool_schema(
@@ -198,6 +226,7 @@ class _ProviderRuntimeBase:
         api_base_url: str,
         timeout_seconds: float = 30.0,
         transport: JSONTransport | None = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> None:
         self.provider_name = provider_name
         self.api_model, self.model_id = _normalize_model_id(provider_name, model_id)
@@ -205,6 +234,7 @@ class _ProviderRuntimeBase:
         self.api_base_url = api_base_url
         self.timeout_seconds = timeout_seconds
         self.transport = transport or UrllibJSONTransport()
+        self.retry_policy = retry_policy or RetryPolicy()
 
     def _request(
         self,
@@ -213,12 +243,20 @@ class _ProviderRuntimeBase:
         payload: dict[str, object],
         path: str,
     ) -> dict[str, Any]:
-        return self.transport.post_json(
-            url=_join_base_url(self.api_base_url, path),
-            headers=headers,
-            payload=payload,
-            timeout_seconds=self.timeout_seconds,
+        return retry_call(
+            lambda: self.transport.post_json(
+                url=_join_base_url(self.api_base_url, path),
+                headers=headers,
+                payload=payload,
+                timeout_seconds=self.timeout_seconds,
+            ),
+            policy=self.retry_policy,
+            is_retryable=_is_retryable_provider_error,
         )
+
+
+def _is_retryable_provider_error(exc: Exception) -> bool:
+    return isinstance(exc, ProviderRequestError) and exc.retryable
 
 
 class OpenAIResponsesTriageEngine(_ProviderRuntimeBase):
@@ -234,6 +272,7 @@ class OpenAIResponsesTriageEngine(_ProviderRuntimeBase):
         api_base_url: str = "https://api.openai.com/v1",
         timeout_seconds: float = 30.0,
         transport: JSONTransport | None = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> None:
         super().__init__(
             provider_name="openai",
@@ -243,6 +282,7 @@ class OpenAIResponsesTriageEngine(_ProviderRuntimeBase):
             api_base_url=api_base_url,
             timeout_seconds=timeout_seconds,
             transport=transport,
+            retry_policy=retry_policy,
         )
 
     def decide(self, *, query_id: str, query_text: str, evidence: Sequence[EvidenceHit]) -> tuple[TriageDecision, AuditRecord]:
@@ -313,6 +353,7 @@ class OpenAIResponsesJudge(_ProviderRuntimeBase):
         api_base_url: str = "https://api.openai.com/v1",
         timeout_seconds: float = 30.0,
         transport: JSONTransport | None = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> None:
         super().__init__(
             provider_name="openai",
@@ -322,6 +363,7 @@ class OpenAIResponsesJudge(_ProviderRuntimeBase):
             api_base_url=api_base_url,
             timeout_seconds=timeout_seconds,
             transport=transport,
+            retry_policy=retry_policy,
         )
 
     def evaluate(
@@ -403,6 +445,7 @@ class AnthropicTriageEngine(_ProviderRuntimeBase):
         api_base_url: str = "https://api.anthropic.com/v1",
         timeout_seconds: float = 30.0,
         transport: JSONTransport | None = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> None:
         super().__init__(
             provider_name="anthropic",
@@ -412,6 +455,7 @@ class AnthropicTriageEngine(_ProviderRuntimeBase):
             api_base_url=api_base_url,
             timeout_seconds=timeout_seconds,
             transport=transport,
+            retry_policy=retry_policy,
         )
 
     def decide(self, *, query_id: str, query_text: str, evidence: Sequence[EvidenceHit]) -> tuple[TriageDecision, AuditRecord]:
@@ -487,6 +531,7 @@ class AnthropicJudge(_ProviderRuntimeBase):
         api_base_url: str = "https://api.anthropic.com/v1",
         timeout_seconds: float = 30.0,
         transport: JSONTransport | None = None,
+        retry_policy: RetryPolicy | None = None,
     ) -> None:
         super().__init__(
             provider_name="anthropic",
@@ -496,6 +541,7 @@ class AnthropicJudge(_ProviderRuntimeBase):
             api_base_url=api_base_url,
             timeout_seconds=timeout_seconds,
             transport=transport,
+            retry_policy=retry_policy,
         )
 
     def evaluate(
@@ -612,6 +658,7 @@ def build_provider_runtimes(
     api_base_url: str | None = None,
     timeout_seconds: float = 30.0,
     transport: JSONTransport | None = None,
+    retry_policy: RetryPolicy | None = None,
 ) -> tuple[TriageRuntime, JudgeRuntime]:
     if runtime == "openai":
         base_url = api_base_url or "https://api.openai.com/v1"
@@ -623,6 +670,7 @@ def build_provider_runtimes(
                 api_base_url=base_url,
                 timeout_seconds=timeout_seconds,
                 transport=transport,
+                retry_policy=retry_policy,
             ),
             OpenAIResponsesJudge(
                 model_id=judge_model,
@@ -631,6 +679,7 @@ def build_provider_runtimes(
                 api_base_url=base_url,
                 timeout_seconds=timeout_seconds,
                 transport=transport,
+                retry_policy=retry_policy,
             ),
         )
     if runtime == "anthropic":
@@ -643,6 +692,7 @@ def build_provider_runtimes(
                 api_base_url=base_url,
                 timeout_seconds=timeout_seconds,
                 transport=transport,
+                retry_policy=retry_policy,
             ),
             AnthropicJudge(
                 model_id=judge_model,
@@ -651,6 +701,7 @@ def build_provider_runtimes(
                 api_base_url=base_url,
                 timeout_seconds=timeout_seconds,
                 transport=transport,
+                retry_policy=retry_policy,
             ),
         )
     raise ValueError(f"unsupported provider runtime: {runtime}")
